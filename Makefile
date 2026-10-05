@@ -3,6 +3,7 @@ GOLANGCI ?= golangci/golangci-lint:v1.64.8
 WEB_RUN = $(COMPOSE) run --rm --no-deps web sh -c
 
 .DEFAULT_GOAL := help
+-include infra/make/ci.mk
 .PHONY: help up down logs ps migrate-up migrate-down migrate-create tidy test lint fmt smoke clean doctor
 
 help: ## Show this help
@@ -37,7 +38,7 @@ migrate-down: .env ## Roll back ONE migration
 test: .env ## Run Go tests (api, worker) and web typecheck
 	$(COMPOSE) run --rm --no-deps api sh -c "go mod tidy && go test -count=1 ./..."
 	$(COMPOSE) run --rm --no-deps worker go test -count=1 ./...
-	$(WEB_RUN) "npm install --no-audit --no-fund && npm run typecheck"
+	$(WEB_RUN) "npm install --no-audit --no-fund && npm run typecheck && npm test"
 
 lint: .env ## Run golangci-lint (api, worker) and eslint (web)
 	docker run --rm -v "$(CURDIR)/api:/app" -v "$(CURDIR)/.golangci.yml:/cfg/.golangci.yml:ro" -w /app $(GOLANGCI) golangci-lint run -c /cfg/.golangci.yml ./...

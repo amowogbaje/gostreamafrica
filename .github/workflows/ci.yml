@@ -1,34 +1,106 @@
 name: ci
 on:
-  push: { branches: [main] }
+  push:
+    branches: ["**"]   # branches only; tags are handled by release.yml
   pull_request:
+  workflow_call:       # lets release.yml reuse exactly the same checks
+
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   go:
+    name: go (${{ matrix.module }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
-      matrix: { module: [api, worker] }
+      fail-fast: false
+      matrix:
+        module: [api, worker]
     defaults:
-      run: { working-directory: "${{ matrix.module }}" }
+      run:
+        working-directory: ${{ matrix.module }}
+    services:
+      postgres:                       # only the api integration test uses it
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci_pw
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://ci:ci_pw@localhost:5432/ci?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version-file: "${{ matrix.module }}/go.mod", cache: false }
-      - run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
-      - run: go test -count=1 ./...
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache: true
+          cache-dependency-path: ${{ matrix.module }}/go.*
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
       - uses: golangci/golangci-lint-action@v6
         with:
           version: v1.64.8
           working-directory: ${{ matrix.module }}
           args: --config=${{ github.workspace }}/.golangci.yml
+      - name: go test (race detector)
+        run: go test -race -count=1 -timeout 5m ./...
+
+  migrations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci_pw
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every .up.sql has a .down.sql
+        run: |
+          set -eu
+          for f in api/migrations/*.up.sql; do
+            [ -f "${f%.up.sql}.down.sql" ] || { echo "missing down migration for $f"; exit 1; }
+          done
+      - name: Apply up, roll back one, apply again
+        run: |
+          set -eu
+          URL="postgres://ci:ci_pw@localhost:5432/ci?sslmode=disable"
+          m() {
+            docker run --rm --network host -v "$PWD/api/migrations:/migrations:ro" \
+              migrate/migrate:v4.18.1 -path=/migrations -database "$URL" "$@"
+          }
+          m up
+          m down 1
+          m up
+          m version
 
   web:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     defaults:
-      run: { working-directory: web }
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,12 +108,34 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm test
 
   compose:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - run: cp .env.example .env && docker compose config -q
+
+  docker:
+    name: image (${{ matrix.module }})
+    needs: [go, migrations, web, compose]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [api, worker, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.module }}
+          file: ./${{ matrix.module }}/Dockerfile
+          push: false
+          cache-from: type=gha,scope=${{ matrix.module }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.module }}
