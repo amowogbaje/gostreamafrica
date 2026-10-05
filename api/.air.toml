@@ -1,0 +1,12 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o /tmp/api ./cmd/api"
+  bin = "/tmp/api"
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "migrations"]
+  delay = 500
+  poll = true            # file events don't cross Docker Desktop bind mounts reliably
+  poll_interval = 500
+  stop_on_error = true
