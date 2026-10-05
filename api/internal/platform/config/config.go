@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,8 @@ type Config struct {
 	PostgresAddr string // host:port derived from DATABASE_URL
 	RedisAddr    string // host:port derived from REDIS_URL
 	S3Addr       string // host:port derived from S3_ENDPOINT
+	DatabaseURL  string // secret: never log
+	DBMaxConns   int32
 }
 
 // Load reads configuration using the supplied getenv (os.Getenv in main).
@@ -53,6 +56,13 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.PostgresAddr = addr("DATABASE_URL", "5432")
 	cfg.RedisAddr = addr("REDIS_URL", "6379")
 	cfg.S3Addr = addr("S3_ENDPOINT", "")
+	cfg.DatabaseURL = strings.TrimSpace(getenv("DATABASE_URL"))
+	n, convErr := strconv.Atoi(get("DB_MAX_CONNS", "10"))
+	if convErr != nil || n < 1 || n > 100 {
+		errs = append(errs, errors.New("DB_MAX_CONNS must be an integer from 1 to 100"))
+		n = 10
+	}
+	cfg.DBMaxConns = int32(n)
 	return cfg, errors.Join(errs...)
 }
 

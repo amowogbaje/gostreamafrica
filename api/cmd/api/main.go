@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"streamafrica/api/internal/platform/config"
+	"streamafrica/api/internal/platform/database"
 	"streamafrica/api/internal/platform/health"
 	"streamafrica/api/internal/platform/logging"
 	"streamafrica/api/internal/platform/server"
@@ -34,12 +35,18 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	pool, err := database.New(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer pool.Close()
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: server.NewHandler(server.Deps{
 			Logger: logger,
 			Dependencies: []health.Dependency{
-				{Name: "postgres", Check: health.TCP(cfg.PostgresAddr)},
+				{Name: "postgres", Check: database.Check(pool)},
 				{Name: "redis", Check: health.TCP(cfg.RedisAddr)},
 				{Name: "s3", Check: health.TCP(cfg.S3Addr)},
 			},

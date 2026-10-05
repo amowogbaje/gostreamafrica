@@ -53,3 +53,23 @@ func TestLoad_MissingAndInvalid(t *testing.T) {
 		t.Error("error leaks password")
 	}
 }
+
+func TestLoad_DBMaxConns(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://u:p@db/x",
+		"REDIS_URL":    "redis://cache",
+		"S3_ENDPOINT":  "http://minio:9000",
+	}
+	cfg, err := Load(env(base))
+	if err != nil || cfg.DBMaxConns != 10 || cfg.DatabaseURL == "" {
+		t.Fatalf("default: cfg=%+v err=%v", cfg, err)
+	}
+	base["DB_MAX_CONNS"] = "0"
+	if _, err := Load(env(base)); err == nil || !strings.Contains(err.Error(), "DB_MAX_CONNS") {
+		t.Fatalf("expected DB_MAX_CONNS error, got %v", err)
+	}
+	base["DB_MAX_CONNS"] = "abc"
+	if _, err := Load(env(base)); err == nil {
+		t.Fatal("expected error for non-numeric")
+	}
+}

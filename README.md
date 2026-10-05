@@ -46,5 +46,8 @@ Containers run as root in dev, so on Linux files they create in bind mounts (`we
 **3. Services killed or restarting (exit code 137), web never becomes healthy**
 That is out-of-memory. Raise Docker's memory to 6 GB (Docker Desktop → Settings → Resources), check `docker stats --no-stream`, and close other heavy apps. To start a reduced stack: `docker compose up -d postgres redis minio minio-init mailpit api`.
 
+**4. "pull access denied ... repository does not exist" (MinIO)**
+MinIO deleted its official images in 2026. This repo uses mirrors via `MINIO_IMAGE` / `MC_IMAGE` in `.env` (see `docs/adr/0003-minio-images-gone.md`). If a mirror is gone too, run `docker pull <image>` alone to confirm, then point those variables at another source. For any other failure run `make doctor` and read `docs/runbooks/docker-debugging.md`.
+
 ## Layout
 `web/` Next.js · `api/` Go modular monolith · `worker/` Go FFmpeg worker · `infra/` nginx + scripts · `docs/` architecture, ADRs, API spec, runbooks.

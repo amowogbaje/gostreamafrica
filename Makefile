@@ -3,7 +3,7 @@ GOLANGCI ?= golangci/golangci-lint:v1.64.8
 WEB_RUN = $(COMPOSE) run --rm --no-deps web sh -c
 
 .DEFAULT_GOAL := help
-.PHONY: help up down logs ps migrate-up migrate-down test lint fmt smoke clean
+.PHONY: help up down logs ps migrate-up migrate-down migrate-create tidy test lint fmt smoke clean doctor
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -35,7 +35,7 @@ migrate-down: .env ## Roll back ONE migration
 	$(COMPOSE) --profile tools run --rm migrate down 1
 
 test: .env ## Run Go tests (api, worker) and web typecheck
-	$(COMPOSE) run --rm --no-deps api go test -count=1 ./...
+	$(COMPOSE) run --rm --no-deps api sh -c "go mod tidy && go test -count=1 ./..."
 	$(COMPOSE) run --rm --no-deps worker go test -count=1 ./...
 	$(WEB_RUN) "npm install --no-audit --no-fund && npm run typecheck"
 
@@ -50,3 +50,14 @@ fmt: .env ## gofmt api and worker
 
 smoke: ## End-to-end check of every endpoint (needs 'make up' first)
 	@sh infra/scripts/smoke.sh
+
+tidy: .env ## go mod tidy for api and worker (generates go.sum)
+	$(COMPOSE) run --rm --no-deps api go mod tidy
+	$(COMPOSE) run --rm --no-deps worker go mod tidy
+
+migrate-create: .env ## Create a migration pair (usage: make migrate-create name=add_users)
+	@test -n "$(name)" || (echo "usage: make migrate-create name=add_users" && exit 1)
+	$(COMPOSE) --profile tools run --rm migrate create -ext sql -dir /migrations -seq $(name)
+
+doctor: ## Print the facts you need when something is broken
+	@sh infra/scripts/doctor.sh
