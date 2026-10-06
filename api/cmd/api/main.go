@@ -15,6 +15,7 @@ import (
 	"streamafrica/api/internal/platform/database"
 	"streamafrica/api/internal/platform/health"
 	"streamafrica/api/internal/platform/logging"
+	"streamafrica/api/internal/platform/redisx"
 	"streamafrica/api/internal/platform/server"
 )
 
@@ -41,13 +42,19 @@ func run() error {
 	}
 	defer pool.Close()
 
+	rdb, err := redisx.New(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("redis: %w", err)
+	}
+	defer rdb.Close()
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: server.NewHandler(server.Deps{
 			Logger: logger,
 			Dependencies: []health.Dependency{
 				{Name: "postgres", Check: database.Check(pool)},
-				{Name: "redis", Check: health.TCP(cfg.RedisAddr)},
+				{Name: "redis", Check: redisx.Check(rdb)},
 				{Name: "s3", Check: health.TCP(cfg.S3Addr)},
 			},
 		}),

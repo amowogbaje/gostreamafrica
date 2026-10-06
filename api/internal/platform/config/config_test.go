@@ -7,12 +7,16 @@ import (
 
 func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
-func TestLoad_OK(t *testing.T) {
-	cfg, err := Load(env(map[string]string{
+func base() map[string]string {
+	return map[string]string{
 		"DATABASE_URL": "postgres://u:p@postgres:5432/db?sslmode=disable",
 		"REDIS_URL":    "redis://:pw@redis:6379/0",
 		"S3_ENDPOINT":  "http://minio:9000",
-	}))
+	}
+}
+
+func TestLoad_OK(t *testing.T) {
+	cfg, err := Load(env(base()))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -20,6 +24,9 @@ func TestLoad_OK(t *testing.T) {
 		t.Fatalf("bad addrs: %+v", cfg)
 	}
 	if cfg.HTTPAddr != ":8080" || cfg.Env != "local" || cfg.LogLevel != "info" {
+		t.Fatalf("bad defaults: %+v", cfg)
+	}
+	if cfg.DBMaxConns != 10 || cfg.TrustedProxyHops != 0 || cfg.DatabaseURL == "" || cfg.RedisURL == "" {
 		t.Fatalf("bad defaults: %+v", cfg)
 	}
 }
@@ -54,22 +61,24 @@ func TestLoad_MissingAndInvalid(t *testing.T) {
 	}
 }
 
-func TestLoad_DBMaxConns(t *testing.T) {
-	base := map[string]string{
-		"DATABASE_URL": "postgres://u:p@db/x",
-		"REDIS_URL":    "redis://cache",
-		"S3_ENDPOINT":  "http://minio:9000",
+func TestLoad_IntegerSettings(t *testing.T) {
+	m := base()
+	m["DB_MAX_CONNS"] = "25"
+	m["TRUSTED_PROXY_HOPS"] = "1"
+	cfg, err := Load(env(m))
+	if err != nil || cfg.DBMaxConns != 25 || cfg.TrustedProxyHops != 1 {
+		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
-	cfg, err := Load(env(base))
-	if err != nil || cfg.DBMaxConns != 10 || cfg.DatabaseURL == "" {
-		t.Fatalf("default: cfg=%+v err=%v", cfg, err)
+	for key, bad := range map[string]string{"DB_MAX_CONNS": "0", "TRUSTED_PROXY_HOPS": "9"} {
+		m := base()
+		m[key] = bad
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), key) {
+			t.Fatalf("%s=%s: expected error naming the key, got %v", key, bad, err)
+		}
 	}
-	base["DB_MAX_CONNS"] = "0"
-	if _, err := Load(env(base)); err == nil || !strings.Contains(err.Error(), "DB_MAX_CONNS") {
-		t.Fatalf("expected DB_MAX_CONNS error, got %v", err)
-	}
-	base["DB_MAX_CONNS"] = "abc"
-	if _, err := Load(env(base)); err == nil {
+	m = base()
+	m["DB_MAX_CONNS"] = "abc"
+	if _, err := Load(env(m)); err == nil {
 		t.Fatal("expected error for non-numeric")
 	}
 }

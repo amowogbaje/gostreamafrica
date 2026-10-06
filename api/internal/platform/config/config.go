@@ -10,17 +10,19 @@ import (
 	"strings"
 )
 
-// Config holds the settings the API needs today. Secrets are never stored
-// here; only dial addresses derived from connection URLs.
+// Config holds the settings the API needs today. Fields marked secret must
+// never be logged.
 type Config struct {
-	Env          string
-	HTTPAddr     string
-	LogLevel     string
-	PostgresAddr string // host:port derived from DATABASE_URL
-	RedisAddr    string // host:port derived from REDIS_URL
-	S3Addr       string // host:port derived from S3_ENDPOINT
-	DatabaseURL  string // secret: never log
-	DBMaxConns   int32
+	Env              string
+	HTTPAddr         string
+	LogLevel         string
+	PostgresAddr     string // host:port derived from DATABASE_URL
+	RedisAddr        string // host:port derived from REDIS_URL
+	S3Addr           string // host:port derived from S3_ENDPOINT
+	DatabaseURL      string // secret
+	RedisURL         string // secret
+	DBMaxConns       int32
+	TrustedProxyHops int // reverse proxies in front of the API (0 = none)
 }
 
 // Load reads configuration using the supplied getenv (os.Getenv in main).
@@ -47,6 +49,14 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		return a
 	}
+	intIn := func(key, def string, lo, hi int) int {
+		n, err := strconv.Atoi(get(key, def))
+		if err != nil || n < lo || n > hi {
+			errs = append(errs, fmt.Errorf("%s must be an integer from %d to %d", key, lo, hi))
+			n, _ = strconv.Atoi(def)
+		}
+		return n
+	}
 
 	cfg := Config{
 		Env:      get("APP_ENV", "local"),
@@ -57,12 +67,9 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.RedisAddr = addr("REDIS_URL", "6379")
 	cfg.S3Addr = addr("S3_ENDPOINT", "")
 	cfg.DatabaseURL = strings.TrimSpace(getenv("DATABASE_URL"))
-	n, convErr := strconv.Atoi(get("DB_MAX_CONNS", "10"))
-	if convErr != nil || n < 1 || n > 100 {
-		errs = append(errs, errors.New("DB_MAX_CONNS must be an integer from 1 to 100"))
-		n = 10
-	}
-	cfg.DBMaxConns = int32(n)
+	cfg.RedisURL = strings.TrimSpace(getenv("REDIS_URL"))
+	cfg.DBMaxConns = int32(intIn("DB_MAX_CONNS", "10", 1, 100))
+	cfg.TrustedProxyHops = intIn("TRUSTED_PROXY_HOPS", "0", 0, 5)
 	return cfg, errors.Join(errs...)
 }
 
