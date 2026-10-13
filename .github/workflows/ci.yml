@@ -91,7 +91,7 @@ jobs:
           for f in api/migrations/*.up.sql; do
             [ -f "${f%.up.sql}.down.sql" ] || { echo "missing down migration for $f"; exit 1; }
           done
-      - name: Apply up, roll back one, apply again
+      - name: Apply, roll EVERYTHING back, apply again
         run: |
           set -eu
           URL="postgres://ci:ci_pw@localhost:5432/ci?sslmode=disable"
@@ -99,10 +99,50 @@ jobs:
             docker run --rm --network host -v "$PWD/api/migrations:/migrations:ro" \
               migrate/migrate:v4.18.1 -path=/migrations -database "$URL" "$@"
           }
+          N=$(ls api/migrations/*.up.sql | wc -l)
           m up
-          m down 1
+          m down "$N"
           m up
           m version
+
+  openapi:
+    name: openapi contract (handlers match docs/openapi.yaml)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci_pw
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7.4.1-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://ci:ci_pw@localhost:5432/ci?sslmode=disable
+      TEST_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache: true
+          cache-dependency-path: api/go.*
+      - name: Routes equal spec operations; every operation is called and validated
+        working-directory: api
+        run: go test -race -count=1 -v ./internal/contract/
 
   web:
     runs-on: ubuntu-24.04
@@ -131,7 +171,7 @@ jobs:
 
   docker:
     name: image (${{ matrix.module }})
-    needs: [go, migrations, web, compose]
+    needs: [go, migrations, openapi, web, compose]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:

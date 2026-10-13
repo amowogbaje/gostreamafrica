@@ -105,9 +105,34 @@ services:
       DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       S3_ENDPOINT: http://minio:9000
+      # nginx is the one proxy in front of the API locally: trust exactly one X-Forwarded-For hop
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      # --- auth (see docs/security-auth.md)
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      AUTH_ACCESS_TTL_MINUTES: ${AUTH_ACCESS_TTL_MINUTES:-15}
+      AUTH_REFRESH_TTL_DAYS: ${AUTH_REFRESH_TTL_DAYS:-30}
+      AUTH_REFRESH_ABSOLUTE_DAYS: ${AUTH_REFRESH_ABSOLUTE_DAYS:-90}
+      AUTH_REFRESH_COOKIE_PATH: ${AUTH_REFRESH_COOKIE_PATH:-/api/v1/auth}
+      AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8088}
+      AUTH_ARGON2_MEMORY_KIB: ${AUTH_ARGON2_MEMORY_KIB:-19456}
+      AUTH_ARGON2_TIME: ${AUTH_ARGON2_TIME:-2}
+      AUTH_ARGON2_PARALLELISM: ${AUTH_ARGON2_PARALLELISM:-1}
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:8088}
+      # --- email (Mailpit locally)
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: "${SMTP_FROM:-StreamAfrica <no-reply@streamafrica.local>}"
+      # --- catalog cache
+      CATALOG_HOME_TTL_SECONDS: ${CATALOG_HOME_TTL_SECONDS:-300}
+      CATALOG_GENRES_TTL_SECONDS: ${CATALOG_GENRES_TTL_SECONDS:-600}
+      # --- tests run inside this container (make test): integration tests use throwaway schemas,
+      # never your data, and the OpenAPI contract test reads the mounted spec
+      TEST_DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      TEST_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      OPENAPI_SPEC: /docs/openapi.yaml
     volumes:
       - ./api:/app
+      - ./docs:/docs:ro
       - gomod_cache:/go/pkg/mod
       - api_gobuild:/root/.cache/go-build
     ports:
@@ -117,6 +142,7 @@ services:
       redis: { condition: service_healthy }
       minio: { condition: service_healthy }
       minio-init: { condition: service_completed_successfully }
+      mailpit: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
       interval: 5s

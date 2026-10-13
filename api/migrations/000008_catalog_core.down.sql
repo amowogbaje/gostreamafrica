@@ -1,0 +1,10 @@
+DROP TABLE title_people;
+DROP TABLE title_genres;
+DROP TABLE titles;
+DROP TABLE people;
+DROP TABLE genres;
+DROP TYPE credit_role;
+DROP TYPE title_status;
+DROP TYPE title_type;
+DROP FUNCTION app_unaccent(text);
+DROP EXTENSION IF EXISTS unaccent;

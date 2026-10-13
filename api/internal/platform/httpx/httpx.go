@@ -13,10 +13,12 @@ type ErrorBody struct {
 }
 
 // ErrorDetail describes one error. Code is stable and machine-readable.
+// Fields is set only for validation errors (field name to message).
 type ErrorDetail struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id,omitempty"`
+	Code      string            `json:"code"`
+	Message   string            `json:"message"`
+	RequestID string            `json:"request_id,omitempty"`
+	Fields    map[string]string `json:"fields,omitempty"`
 }
 
 // WriteJSON writes v as JSON with the given status.
@@ -35,6 +37,16 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 func WriteError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	WriteJSON(w, status, ErrorBody{Error: ErrorDetail{
 		Code: code, Message: message, RequestID: RequestIDFrom(r.Context()),
+	}})
+}
+
+// WriteValidationError writes a 422 with one message per invalid field.
+func WriteValidationError(w http.ResponseWriter, r *http.Request, fields map[string]string) {
+	WriteJSON(w, http.StatusUnprocessableEntity, ErrorBody{Error: ErrorDetail{
+		Code:      "validation_failed",
+		Message:   "one or more fields are invalid",
+		RequestID: RequestIDFrom(r.Context()),
+		Fields:    fields,
 	}})
 }
 

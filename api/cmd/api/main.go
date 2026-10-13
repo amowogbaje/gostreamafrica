@@ -11,12 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"streamafrica/api/internal/app"
 	"streamafrica/api/internal/platform/config"
 	"streamafrica/api/internal/platform/database"
-	"streamafrica/api/internal/platform/health"
 	"streamafrica/api/internal/platform/logging"
 	"streamafrica/api/internal/platform/redisx"
-	"streamafrica/api/internal/platform/server"
 )
 
 func main() {
@@ -48,16 +47,14 @@ func run() error {
 	}
 	defer rdb.Close()
 
+	application, err := app.New(app.Options{Config: cfg, Pool: pool, Redis: rdb, Logger: logger})
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
-		Addr: cfg.HTTPAddr,
-		Handler: server.NewHandler(server.Deps{
-			Logger: logger,
-			Dependencies: []health.Dependency{
-				{Name: "postgres", Check: database.Check(pool)},
-				{Name: "redis", Check: redisx.Check(rdb)},
-				{Name: "s3", Check: health.TCP(cfg.S3Addr)},
-			},
-		}),
+		Addr:              cfg.HTTPAddr,
+		Handler:           application.Handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -82,6 +79,7 @@ func run() error {
 	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("shutdown: %w", err)
 	}
+	application.Wait() // let queued emails finish
 	logger.Info("api stopped")
 	return nil
 }

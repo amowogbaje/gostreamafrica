@@ -1,5 +1,5 @@
 # ADR-0010: Content licensing approach before public launch
-Status: **Proposed. Owner decision needed.**
+Status: Accepted (option D approved by the owner; legal review still required)
 
 This ADR is a product and risk framing, not legal advice. Confirm the points below with a Nigerian entertainment or IP lawyer.
 
@@ -13,7 +13,7 @@ The platform will publish films it does not own. Without cleared rights the busi
 | Pros | Fast, scales, fits the creator vision. | Clearest legal position, better quality control. | Lowest risk and cost. | Strong launch story and a path to scale. |
 | Cons | Infringement risk lands on the platform's reputation. Needs takedown operations and verification. | Slow, needs legal time and cash, and negotiation. | Thin appeal, hard to prove demand. | Longer setup, and both paths must be run well. |
 
-## Recommendation
+## Recommendation (adopted)
 Option D: no public launch until the first titles each have a signed licence on file, then invitation-only creators under a standard agreement. Before launch, have counsel confirm: licence terms (territory, term, exclusivity, payment), music clearance, classification requirements, and the takedown process.
 
 ## Consequences (whichever option is chosen)
@@ -23,4 +23,6 @@ Option D: no public launch until the first titles each have a signed licence on 
 - A pre-launch checklist gates publishing: signed agreement on file, chain-of-title evidence, music cleared, classification confirmed.
 
 ## Decision
-Pending. Reply with A, B, C or D, plus any legal constraints, to move this to Accepted.
+Option D: a small curated catalog under signed non-exclusive licences at launch, then invitation-only creators under a standard distribution agreement.
+- No public launch until each launch title has a signed licence on file and the pre-launch checklist above is complete.
+- Approving this approach does not replace legal review. Counsel confirms licence terms, music clearance, classification requirements and the takedown process before launch.
