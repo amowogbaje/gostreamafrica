@@ -7,7 +7,7 @@ WEB_RUN = $(COMPOSE) run --rm --no-deps web sh -c
 .PHONY: help up down logs ps migrate-up migrate-down migrate-create tidy test lint fmt smoke clean doctor
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
 
 .env:
 	cp .env.example .env
@@ -41,8 +41,8 @@ test: .env ## Run Go tests (api, worker) and web typecheck
 	$(WEB_RUN) "npm install --no-audit --no-fund && npm run typecheck && npm test"
 
 lint: .env ## Run golangci-lint (api, worker) and eslint (web)
-	docker run --rm -v "$(CURDIR)/api:/app" -v "$(CURDIR)/.golangci.yml:/cfg/.golangci.yml:ro" -w /app $(GOLANGCI) golangci-lint run -c /cfg/.golangci.yml ./...
-	docker run --rm -v "$(CURDIR)/worker:/app" -v "$(CURDIR)/.golangci.yml:/cfg/.golangci.yml:ro" -w /app $(GOLANGCI) golangci-lint run -c /cfg/.golangci.yml ./...
+	docker run --rm -v streamafrica_gomod_cache:/go/pkg/mod -v streamafrica_golangci_cache:/root/.cache -v "$(CURDIR)/api:/app" -v "$(CURDIR)/.golangci.yml:/cfg/.golangci.yml:ro" -w /app $(GOLANGCI) golangci-lint run -c /cfg/.golangci.yml ./...
+	docker run --rm -v streamafrica_gomod_cache:/go/pkg/mod -v streamafrica_golangci_cache:/root/.cache -v "$(CURDIR)/worker:/app" -v "$(CURDIR)/.golangci.yml:/cfg/.golangci.yml:ro" -w /app $(GOLANGCI) golangci-lint run -c /cfg/.golangci.yml ./...
 	$(WEB_RUN) "npm install --no-audit --no-fund && npm run lint"
 
 fmt: .env ## gofmt api and worker

@@ -7,9 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"sync"
@@ -20,30 +18,22 @@ import (
 	"github.com/getkin/kin-openapi/routers"
 	"github.com/getkin/kin-openapi/routers/gorillamux"
 
+	"streamafrica/api/internal/apidocs"
 	"streamafrica/api/internal/app"
 	"streamafrica/api/internal/auth"
 	"streamafrica/api/internal/platform/config"
 )
 
-// specPath finds docs/openapi.yaml. In the dev container only ./api is mounted next to /docs, so
-// OPENAPI_SPEC points there.
-func specPath(t *testing.T) string {
-	t.Helper()
-	if p := os.Getenv("OPENAPI_SPEC"); p != "" {
-		return p
-	}
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "..", "..", "docs", "openapi.yaml")
-}
-
+// loadSpec loads the spec the API actually serves (embedded in the binary). A separate test in
+// package apidocs fails when it differs from docs/openapi.yaml.
 func loadSpec(t *testing.T) (*openapi3.T, routers.Router) {
 	t.Helper()
-	doc, err := openapi3.NewLoader().LoadFromFile(specPath(t))
+	doc, err := openapi3.NewLoader().LoadFromData(apidocs.Spec)
 	if err != nil {
-		t.Fatalf("cannot load the spec (set OPENAPI_SPEC if docs/ is not next to api/): %v", err)
+		t.Fatalf("cannot load the embedded spec: %v", err)
 	}
 	if err := doc.Validate(context.Background()); err != nil {
-		t.Fatalf("docs/openapi.yaml is not a valid OpenAPI 3 document: %v", err)
+		t.Fatalf("the OpenAPI document is not valid: %v", err)
 	}
 	router, err := gorillamux.NewRouter(doc)
 	if err != nil {
@@ -92,7 +82,7 @@ func testConfig(s3Addr string) config.Config {
 		RefreshTTL: 30 * 24 * time.Hour, RefreshAbsoluteTTL: 90 * 24 * time.Hour,
 		RefreshCookiePath: "/v1/auth", AllowedOrigins: []string{"http://localhost:3000"},
 		WebBaseURL: "http://localhost:8088", Argon2MemoryKiB: 64, Argon2Time: 1, Argon2Parallelism: 1,
-		CatalogHomeTTL: time.Minute, CatalogGenresTTL: time.Minute,
+		CatalogHomeTTL: time.Minute, CatalogGenresTTL: time.Minute, APIDocsEnabled: true,
 	}
 }
 
@@ -146,5 +136,36 @@ func TestRoutesMatchSpec(t *testing.T) {
 	}
 	if len(inCode) < 20 {
 		t.Fatalf("found only %d routes in code", len(inCode))
+	}
+}
+
+// TestDocsAreServedOnlyWhenEnabled checks the toggle through the real wiring, and that the docs
+// pages are not counted as API routes (they are not part of the contract).
+func TestDocsAreServedOnlyWhenEnabled(t *testing.T) {
+	build := func(enabled bool) http.Handler {
+		cfg := testConfig("127.0.0.1:1")
+		cfg.APIDocsEnabled = enabled
+		a, err := app.New(app.Options{Config: cfg, Logger: quiet(), Mailer: &fakeMailer{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a.Handler
+	}
+	status := func(h http.Handler, path string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code
+	}
+	on, off := build(true), build(false)
+	for _, p := range []string{"/docs/", "/docs/openapi.yaml", "/docs/openapi.json", "/docs/swagger-ui-bundle.js"} {
+		if got := status(on, p); got != 200 {
+			t.Errorf("enabled: GET %s = %d", p, got)
+		}
+		if got := status(off, p); got != 404 {
+			t.Errorf("disabled: GET %s = %d, want 404 (docs must be off unless enabled)", p, got)
+		}
+	}
+	if got := status(off, "/docs"); got != 404 {
+		t.Errorf("disabled: GET /docs = %d", got)
 	}
 }

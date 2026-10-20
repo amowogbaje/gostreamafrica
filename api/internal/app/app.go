@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"streamafrica/api/internal/apidocs"
 	"streamafrica/api/internal/auth"
 	"streamafrica/api/internal/catalog"
 	"streamafrica/api/internal/platform/config"
@@ -105,6 +106,15 @@ func New(o Options) (*App, error) {
 		Optional: authHandler.OptionalAuthenticate(),
 	}, limiter, o.Logger)
 
+	mounts := []func(httpx.Mux){authHandler.Mount, catalogHandler.Mount}
+	if cfg.APIDocsEnabled {
+		docs, err := apidocs.New()
+		if err != nil {
+			return nil, fmt.Errorf("apidocs: %w", err)
+		}
+		mounts = append(mounts, docs.Mount)
+	}
+
 	return &App{
 		Auth:    authSvc,
 		Catalog: catalogSvc,
@@ -115,7 +125,7 @@ func New(o Options) (*App, error) {
 				{Name: "redis", Check: redisx.Check(o.Redis)},
 				{Name: "s3", Check: health.TCP(cfg.S3Addr)},
 			},
-			Mount:   []func(httpx.Mux){authHandler.Mount, catalogHandler.Mount},
+			Mount:   mounts,
 			OnRoute: o.OnRoute,
 		}),
 	}, nil

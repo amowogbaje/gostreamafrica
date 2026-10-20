@@ -140,3 +140,35 @@ func TestLoad_IntegerSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_APIDocsToggle(t *testing.T) {
+	cases := []struct {
+		env, value string
+		want       bool
+		wantErr    bool
+	}{
+		{"local", "", true, false},       // on by default for local development
+		{"production", "", false, false}, // off by default everywhere else
+		{"staging", "", false, false},
+		{"production", "true", true, false}, // explicit opt-in
+		{"local", "false", false, false},    // explicit opt-out
+		{"local", "maybe", true, true},
+	}
+	for _, c := range cases {
+		m := base()
+		m["APP_ENV"] = c.env
+		if c.env != "local" {
+			m["AUTH_JWT_SECRET"] = strings.Repeat("k", 40)
+		}
+		if c.value != "" {
+			m["API_DOCS_ENABLED"] = c.value
+		}
+		cfg, err := Load(env(m))
+		if (err != nil) != c.wantErr || (err == nil && cfg.APIDocsEnabled != c.want) {
+			t.Errorf("env=%s value=%q: enabled=%v err=%v, want enabled=%v wantErr=%v", c.env, c.value, cfg.APIDocsEnabled, err, c.want, c.wantErr)
+		}
+		if c.wantErr && !strings.Contains(err.Error(), "API_DOCS_ENABLED") {
+			t.Errorf("error must name the variable: %v", err)
+		}
+	}
+}

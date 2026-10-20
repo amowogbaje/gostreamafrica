@@ -1,5 +1,5 @@
 # Included from the root Makefile with: -include infra/make/ci.mk
-.PHONY: docker-build actionlint env-upgrade test-unit seed seed-bulk seed-bulk-clean explain
+.PHONY: docker-build actionlint env-upgrade test-unit seed seed-bulk seed-bulk-clean explain docs docs-sync
 
 docker-build: ## Build the three production images locally (same as CI)
 	docker build -t streamafrica-api:local ./api
@@ -33,3 +33,11 @@ seed-bulk-clean: .env ## Remove the generated bulk rows
 
 explain: .env ## Show query plans for the main access patterns (run make seed-bulk first)
 	$(PSQL) < api/seeds/explain_queries.sql
+
+docs: ## Show where the interactive API docs (Swagger UI) are
+	@echo "Swagger UI : http://localhost:8088/api/docs/    (direct: http://localhost:8080/docs/)"
+	@echo "Raw spec   : http://localhost:8088/api/docs/openapi.yaml"
+
+docs-sync: ## After editing docs/openapi.yaml: refresh the copy embedded in the API binary
+	cp docs/openapi.yaml api/internal/apidocs/openapi.yaml
+	@echo "synced. Rebuild the API (it restarts itself in dev) and run: make test"

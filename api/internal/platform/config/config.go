@@ -49,6 +49,9 @@ type Config struct {
 
 	CatalogHomeTTL   time.Duration
 	CatalogGenresTTL time.Duration
+
+	// APIDocsEnabled serves Swagger UI and the spec at /docs/. On by default only for APP_ENV=local.
+	APIDocsEnabled bool
 }
 
 // Load reads configuration using the supplied getenv (os.Getenv in main).
@@ -160,6 +163,17 @@ func Load(getenv func(string) string) (Config, error) {
 	// --- catalog cache
 	cfg.CatalogHomeTTL = time.Duration(intIn("CATALOG_HOME_TTL_SECONDS", "300", 10, 3600)) * time.Second
 	cfg.CatalogGenresTTL = time.Duration(intIn("CATALOG_GENRES_TTL_SECONDS", "600", 10, 86400)) * time.Second
+
+	// --- API documentation page
+	cfg.APIDocsEnabled = cfg.Env == "local"
+	if v := strings.TrimSpace(getenv("API_DOCS_ENABLED")); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			errs = append(errs, errors.New("API_DOCS_ENABLED must be true or false"))
+		} else {
+			cfg.APIDocsEnabled = b
+		}
+	}
 	return cfg, errors.Join(errs...)
 }
 

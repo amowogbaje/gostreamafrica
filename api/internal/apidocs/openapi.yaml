@@ -1,0 +1,1555 @@
+# GENERATED ONCE, THEN EDITED BY HAND: this file is the source of truth.
+# api/internal/contract fails CI when handlers and this file disagree.
+openapi: 3.0.3
+info:
+  title: StreamAfrica API
+  version: 0.3.0
+  description: 'StreamAfrica HTTP API.
+
+
+    **Try it from this page**
+
+    1. Call **POST /v1/auth/register** (or **/v1/auth/login** if you already have an account). Copy `access_token`
+    from the response.
+
+    2. Click **Authorize** (top right), paste the token (no `Bearer ` prefix) and confirm.
+
+    3. Call anything marked with a padlock. Access tokens last 15 minutes: log in again when you see `token_expired`.
+
+
+    The browser keeps the refresh cookie for you, so **POST /v1/auth/refresh** works from this page. Verification
+    and reset emails land in Mailpit (http://localhost:8025) in local development.
+
+
+    This file is the contract: `api/internal/contract` fails CI when a handler and this file disagree.'
+servers:
+- url: http://localhost:8088/api
+  description: through nginx (local)
+- url: http://localhost:8080
+  description: direct to the API (local)
+tags:
+- name: health
+- name: auth
+- name: me
+- name: catalog
+- name: library
+paths:
+  /healthz:
+    get:
+      tags:
+      - health
+      summary: Liveness
+      operationId: healthz
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /readyz:
+    get:
+      tags:
+      - health
+      summary: 'Readiness: Postgres, Redis and object storage reachable'
+      operationId: readyz
+      responses:
+        '200':
+          description: all dependencies reachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: at least one dependency is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+  /v1/auth/register:
+    post:
+      tags:
+      - auth
+      summary: Create an account (role viewer), send the verification email and sign in
+      operationId: register
+      description: 'Rate limited: 5 per hour per IP. Web clients get the refresh token as an HttpOnly cookie; send
+        X-Auth-Transport: body to receive it in the response body.'
+      parameters:
+      - name: X-Auth-Transport
+        in: header
+        required: false
+        schema:
+          type: string
+          enum:
+          - body
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: created
+          headers: &id008
+            Set-Cookie:
+              schema:
+                type: string
+              description: sa_refresh=...; HttpOnly; SameSite=Strict (web clients only)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '409':
+          description: Email already registered (email_taken)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400': &id006
+          description: Malformed JSON or unknown field (invalid_json)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413': &id002
+          description: Body larger than 8 KB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415': &id003
+          description: Content-Type must be application/json
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422': &id007
+          description: Validation failed; error.fields names the fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429': &id004
+          description: Rate limited
+          headers: &id001
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503': &id005
+          description: Rate limiter or lockout store unavailable (fails closed)
+          headers: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/auth/verify-email:
+    post:
+      tags:
+      - auth
+      summary: Confirm an email address with the emailed single-use token
+      operationId: verifyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '204':
+          description: verified
+        '400':
+          description: Invalid or expired token, or malformed JSON (invalid_or_expired_token, invalid_json)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413': *id002
+        '415': *id003
+        '429': *id004
+        '503': *id005
+  /v1/auth/resend-verification:
+    post:
+      tags:
+      - auth
+      summary: Send a fresh verification link (same answer whether or not the account exists)
+      operationId: resendVerification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRequest'
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400': *id006
+        '413': *id002
+        '415': *id003
+        '422': *id007
+        '429': *id004
+        '503': *id005
+  /v1/auth/login:
+    post:
+      tags:
+      - auth
+      summary: Sign in
+      operationId: login
+      description: Wrong password and unknown email return the same 401. After repeated failures the account/IP
+        pair is locked with exponential backoff (429 with Retry-After).
+      parameters:
+      - name: X-Auth-Transport
+        in: header
+        required: false
+        schema:
+          type: string
+          enum:
+          - body
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: signed in
+          headers: *id008
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid email or password (invalid_credentials)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Account suspended (account_disabled)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400': *id006
+        '413': *id002
+        '415': *id003
+        '422': *id007
+        '429': *id004
+        '503': *id005
+  /v1/auth/refresh:
+    post:
+      tags:
+      - auth
+      summary: Exchange a refresh token for new tokens (the old refresh token stops working)
+      operationId: refresh
+      description: Reads the refresh token from the sa_refresh cookie (web) or from the JSON body (mobile). Presenting
+        an already-used refresh token revokes its whole family.
+      parameters:
+      - name: sa_refresh
+        in: cookie
+        required: false
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: new tokens
+          headers: *id008
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid, expired or reused refresh token (invalid_refresh_token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Cookie request from an origin that is not allowed (forbidden_origin)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400': *id006
+        '413': *id002
+        '415': *id003
+        '429': *id004
+        '503': *id005
+  /v1/auth/logout:
+    post:
+      tags:
+      - auth
+      summary: End the session of the presented refresh token (idempotent)
+      operationId: logout
+      parameters:
+      - name: sa_refresh
+        in: cookie
+        required: false
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '204':
+          description: signed out
+        '403':
+          description: Origin not allowed (forbidden_origin)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400': *id006
+        '413': *id002
+        '415': *id003
+  /v1/auth/logout-all:
+    post:
+      tags:
+      - auth
+      summary: End every session of the signed-in user
+      operationId: logoutAll
+      security: &id009
+      - bearerAuth: []
+      responses:
+        '204':
+          description: all sessions ended
+        '401': &id010
+          description: Not signed in, or the access token is invalid or expired (codes unauthenticated, invalid_token,
+            token_expired)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/auth/forgot-password:
+    post:
+      tags:
+      - auth
+      summary: Email a password-reset link (same answer whether or not the account exists)
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRequest'
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400': *id006
+        '413': *id002
+        '415': *id003
+        '422': *id007
+        '429': *id004
+        '503': *id005
+  /v1/auth/reset-password:
+    post:
+      tags:
+      - auth
+      summary: Set a new password with a single-use token and sign out everywhere
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '204':
+          description: password changed
+        '400':
+          description: Invalid or expired token, or malformed JSON
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413': *id002
+        '415': *id003
+        '422': *id007
+        '429': *id004
+        '503': *id005
+  /v1/me:
+    get:
+      tags:
+      - me
+      summary: The signed-in user and profile
+      operationId: getMe
+      security: *id009
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401': *id010
+    patch:
+      tags:
+      - me
+      summary: Update the profile (role, status and email cannot be changed here)
+      operationId: patchMe
+      security: *id009
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchMeRequest'
+      responses:
+        '200':
+          description: updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401': *id010
+        '400': *id006
+        '413': *id002
+        '415': *id003
+        '422': *id007
+  /v1/titles:
+    get:
+      tags:
+      - catalog
+      summary: List titles (cursor pagination)
+      operationId: listTitles
+      security: &id012
+      - {}
+      - bearerAuth: []
+      description: Anonymous visitors and viewers see published titles; creators also see their own titles in any
+        state; admins see all.
+      parameters:
+      - name: type
+        in: query
+        schema:
+          type: string
+          enum:
+          - movie
+          - series
+      - name: genre
+        in: query
+        schema:
+          type: string
+          pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+          maxLength: 60
+        description: Genre slug, see GET /v1/genres
+      - name: language
+        in: query
+        schema:
+          type: string
+          pattern: ^[a-z]{2,3}$
+        description: Original language code (en, yo, ig, ha, pcm, ...)
+      - name: q
+        in: query
+        schema:
+          type: string
+          maxLength: 100
+        description: Search text. Accent-insensitive; matches names (weighted higher) and synopses.
+      - name: sort
+        in: query
+        schema:
+          type: string
+          enum:
+          - newest
+          - name
+          - relevance
+        description: Default newest, or relevance when q is given. relevance needs q.
+      - &id015
+        name: cursor
+        in: query
+        schema:
+          type: string
+          maxLength: 600
+        description: Opaque cursor from next_cursor of the previous page
+      - &id016
+        name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+      - &id013
+        name: If-None-Match
+        in: header
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: a page of titles
+          headers: &id011
+            ETag:
+              schema:
+                type: string
+              description: Strong ETag of the body. Send it back in If-None-Match to receive 304.
+            Cache-Control:
+              schema:
+                type: string
+            Vary:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+        '304': &id014
+          description: 'Not modified: the client''s cached copy is current'
+          headers: *id011
+        '400':
+          description: Cursor does not belong to this request (invalid_cursor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401': *id010
+        '422':
+          description: Invalid query parameter; error.fields names it
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/titles/{slug}:
+    get:
+      tags:
+      - catalog
+      summary: 'Title detail: genres, cast and crew, subtitles, seasons and episodes'
+      operationId: getTitle
+      security: *id012
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+          maxLength: 120
+      - *id013
+      responses:
+        '200':
+          description: the title
+          headers: *id011
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TitleDetail'
+        '304': *id014
+        '401': *id010
+        '404':
+          description: No such title, or not visible to this viewer (title_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/genres:
+    get:
+      tags:
+      - catalog
+      summary: All genres with their number of published titles
+      operationId: listGenres
+      description: Cached in Redis (invalidated when titles change) and for 5 minutes by clients and the CDN.
+      parameters:
+      - *id013
+      responses:
+        '200':
+          description: genres
+          headers: *id011
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenreList'
+        '304': *id014
+  /v1/home:
+    get:
+      tags:
+      - catalog
+      summary: 'Home page rows: Trending Now, New Releases, one row per language, and Continue Watching when signed
+        in'
+      operationId: getHome
+      security: *id012
+      parameters:
+      - *id013
+      responses:
+        '200':
+          description: home rows
+          headers: *id011
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Home'
+        '304': *id014
+        '401': *id010
+  /v1/me/watchlist:
+    get:
+      tags:
+      - library
+      summary: The signed-in user's watchlist, newest first
+      operationId: listWatchlist
+      security: *id009
+      parameters:
+      - *id015
+      - *id016
+      responses:
+        '200':
+          description: a page of the watchlist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistPage'
+        '400':
+          description: Invalid cursor (invalid_cursor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401': *id010
+        '422':
+          description: Invalid limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags:
+      - library
+      summary: 'Add a title (idempotent: 201 when added, 200 when already there)'
+      operationId: addToWatchlist
+      security: *id009
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WatchlistAddRequest'
+      responses:
+        '200':
+          description: already on the watchlist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistAdd'
+        '201':
+          description: added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistAdd'
+        '401': *id010
+        '404':
+          description: Title not found or not visible (title_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Watchlist is full, 500 titles (watchlist_full)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400': *id006
+        '413': *id002
+        '415': *id003
+        '422': *id007
+  /v1/me/watchlist/{title_id}:
+    delete:
+      tags:
+      - library
+      summary: Remove a title (idempotent)
+      operationId: removeFromWatchlist
+      security: *id009
+      parameters:
+      - name: title_id
+        in: path
+        required: true
+        schema: &id017
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: removed (or was not there)
+        '401': *id010
+        '422':
+          description: title_id is not a UUID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/me/progress:
+    put:
+      tags:
+      - library
+      summary: Save playback position (idempotent, throttled to 30 requests per minute per user)
+      operationId: putProgress
+      security: *id009
+      description: Marks the item completed at 95% of the duration. A position beyond the duration is clamped. Repeating
+        the same values changes nothing. Movies must omit episode_id; series require it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgressRequest'
+      responses:
+        '200':
+          description: stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Progress'
+        '401': *id010
+        '404':
+          description: Title not found or not visible (title_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation failed (including episode_id missing, not allowed, or from another title)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Throttled
+          headers: *id001
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400': *id006
+        '413': *id002
+        '415': *id003
+        '503': *id005
+  /v1/me/continue-watching:
+    get:
+      tags:
+      - library
+      summary: Unfinished titles, most recently watched first (a series appears once, at the episode watched last)
+      operationId: continueWatching
+      security: *id009
+      parameters:
+      - *id016
+      responses:
+        '200':
+          description: items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContinueList'
+        '401': *id010
+        '422':
+          description: Invalid limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token from register, login or refresh (15 minutes).
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+            fields:
+              type: object
+              additionalProperties:
+                type: string
+          required:
+          - code
+          - message
+      required:
+      - error
+    Health:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+      required:
+      - status
+    Readiness:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+          - degraded
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum:
+            - ok
+            - unreachable
+      required:
+      - status
+    User:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id017
+        email:
+          type: string
+        role:
+          type: string
+          enum:
+          - viewer
+          - creator
+          - admin
+        status:
+          type: string
+          enum:
+          - active
+          - suspended
+        email_verified_at:
+          type: string
+          nullable: true
+          format: date-time
+        created_at: &id018
+          type: string
+          format: date-time
+      required:
+      - id
+      - email
+      - role
+      - status
+      - email_verified_at
+      - created_at
+    Profile:
+      type: object
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        preferred_language:
+          type: string
+      required:
+      - display_name
+      - avatar_url
+      - country
+      - preferred_language
+    Me:
+      type: object
+      additionalProperties: false
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        profile:
+          $ref: '#/components/schemas/Profile'
+      required:
+      - user
+      - profile
+    AuthResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum:
+          - Bearer
+        expires_in:
+          type: integer
+        refresh_token:
+          type: string
+          description: 'Only for body-transport clients (header X-Auth-Transport: body, or a refresh that sent the
+            token in the body). Web clients receive it as an HttpOnly cookie instead.'
+        refresh_expires_in:
+          type: integer
+        user:
+          $ref: '#/components/schemas/User'
+        profile:
+          $ref: '#/components/schemas/Profile'
+      required:
+      - access_token
+      - token_type
+      - expires_in
+      - user
+      - profile
+    Message:
+      type: object
+      additionalProperties: false
+      properties:
+        message:
+          type: string
+      required:
+      - message
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          maxLength: 254
+        password:
+          type: string
+          minLength: 10
+          maxLength: 128
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 80
+      required:
+      - email
+      - password
+      - display_name
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+      required:
+      - email
+      - password
+    EmailRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+      required:
+      - email
+    TokenRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+      required:
+      - token
+    ResetPasswordRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+        new_password:
+          type: string
+          minLength: 10
+          maxLength: 128
+      required:
+      - token
+      - new_password
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        refresh_token:
+          type: string
+      required: []
+    PatchMeRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        avatar_url:
+          type: string
+          nullable: true
+          maxLength: 500
+        country:
+          type: string
+          nullable: true
+          pattern: ^[A-Z]{2}$
+        preferred_language:
+          type: string
+          pattern: ^[a-z]{2,3}(-[A-Z]{2})?$
+    TitleSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        type:
+          type: string
+          enum:
+          - movie
+          - series
+        name:
+          type: string
+        release_year:
+          type: integer
+          nullable: true
+        maturity_rating:
+          type: string
+          nullable: true
+        runtime_minutes:
+          type: integer
+          nullable: true
+        original_language:
+          type: string
+          nullable: true
+        poster_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum:
+          - draft
+          - processing
+          - published
+          - unpublished
+        published_at:
+          type: string
+          nullable: true
+          format: date-time
+        genres: &id019
+          type: array
+          items:
+            type: string
+      required:
+      - id
+      - slug
+      - type
+      - name
+      - release_year
+      - maturity_rating
+      - runtime_minutes
+      - original_language
+      - poster_url
+      - status
+      - published_at
+      - genres
+    Page:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TitleSummary'
+        next_cursor:
+          type: string
+          nullable: true
+      required:
+      - items
+      - next_cursor
+    Genre:
+      type: object
+      additionalProperties: false
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+      required:
+      - slug
+      - name
+    GenreCount:
+      type: object
+      additionalProperties: false
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        title_count:
+          type: integer
+      required:
+      - slug
+      - name
+      - title_count
+    GenreList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenreCount'
+      required:
+      - items
+    Credit:
+      type: object
+      additionalProperties: false
+      properties:
+        person_id: *id017
+        name:
+          type: string
+        photo_url:
+          type: string
+          nullable: true
+        character:
+          type: string
+          nullable: true
+        order:
+          type: integer
+      required:
+      - person_id
+      - name
+      - photo_url
+      - character
+      - order
+    Subtitle:
+      type: object
+      additionalProperties: false
+      properties:
+        language:
+          type: string
+        label:
+          type: string
+        url:
+          type: string
+      required:
+      - language
+      - label
+      - url
+    Episode:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id017
+        number:
+          type: integer
+        name:
+          type: string
+        synopsis:
+          type: string
+          nullable: true
+        runtime_minutes:
+          type: integer
+          nullable: true
+        air_date:
+          type: string
+          nullable: true
+          format: date
+        playable:
+          type: boolean
+        subtitles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subtitle'
+      required:
+      - id
+      - number
+      - name
+      - synopsis
+      - runtime_minutes
+      - air_date
+      - playable
+      - subtitles
+    Season:
+      type: object
+      additionalProperties: false
+      properties:
+        number:
+          type: integer
+        name:
+          type: string
+          nullable: true
+        synopsis:
+          type: string
+          nullable: true
+        episodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Episode'
+      required:
+      - number
+      - name
+      - synopsis
+      - episodes
+    ProgressRef:
+      type: object
+      additionalProperties: false
+      properties:
+        episode_id:
+          type: string
+          format: uuid
+          nullable: true
+        position_seconds:
+          type: integer
+        duration_seconds:
+          type: integer
+        completed:
+          type: boolean
+        updated_at: *id018
+      required:
+      - episode_id
+      - position_seconds
+      - duration_seconds
+      - completed
+      - updated_at
+    ViewerState:
+      type: object
+      additionalProperties: false
+      properties:
+        in_watchlist:
+          type: boolean
+        progress:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressRef'
+      required:
+      - in_watchlist
+      - progress
+    TitleDetail:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        type:
+          type: string
+          enum:
+          - movie
+          - series
+        name:
+          type: string
+        release_year:
+          type: integer
+          nullable: true
+        maturity_rating:
+          type: string
+          nullable: true
+        runtime_minutes:
+          type: integer
+          nullable: true
+        original_language:
+          type: string
+          nullable: true
+        poster_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum:
+          - draft
+          - processing
+          - published
+          - unpublished
+        published_at:
+          type: string
+          nullable: true
+          format: date-time
+        synopsis:
+          type: string
+          nullable: true
+        backdrop_url:
+          type: string
+          nullable: true
+        genres:
+          type: array
+          items:
+            $ref: '#/components/schemas/Genre'
+        directors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Credit'
+        writers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Credit'
+        cast:
+          type: array
+          items:
+            $ref: '#/components/schemas/Credit'
+        playable:
+          type: boolean
+        subtitles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subtitle'
+        seasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/Season'
+        viewer:
+          $ref: '#/components/schemas/ViewerState'
+      required:
+      - id
+      - slug
+      - type
+      - name
+      - release_year
+      - maturity_rating
+      - runtime_minutes
+      - original_language
+      - poster_url
+      - status
+      - published_at
+      - synopsis
+      - backdrop_url
+      - genres
+      - directors
+      - writers
+      - cast
+      - playable
+      - subtitles
+      - seasons
+    WatchlistItem:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        type:
+          type: string
+          enum:
+          - movie
+          - series
+        name:
+          type: string
+        release_year:
+          type: integer
+          nullable: true
+        maturity_rating:
+          type: string
+          nullable: true
+        runtime_minutes:
+          type: integer
+          nullable: true
+        original_language:
+          type: string
+          nullable: true
+        poster_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum:
+          - draft
+          - processing
+          - published
+          - unpublished
+        published_at:
+          type: string
+          nullable: true
+          format: date-time
+        genres: *id019
+        added_at: *id018
+      required:
+      - id
+      - slug
+      - type
+      - name
+      - release_year
+      - maturity_rating
+      - runtime_minutes
+      - original_language
+      - poster_url
+      - status
+      - published_at
+      - genres
+      - added_at
+    WatchlistPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchlistItem'
+        next_cursor:
+          type: string
+          nullable: true
+      required:
+      - items
+      - next_cursor
+    WatchlistAdd:
+      type: object
+      additionalProperties: false
+      properties:
+        title_id: *id017
+        added_at: *id018
+      required:
+      - title_id
+      - added_at
+    WatchlistAddRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title_id: *id017
+      required:
+      - title_id
+    EpisodeRef:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id017
+        season_number:
+          type: integer
+        number:
+          type: integer
+        name:
+          type: string
+      required:
+      - id
+      - season_number
+      - number
+      - name
+    ContinueItem:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          $ref: '#/components/schemas/TitleSummary'
+        episode:
+          allOf:
+          - $ref: '#/components/schemas/EpisodeRef'
+          nullable: true
+        position_seconds:
+          type: integer
+        duration_seconds:
+          type: integer
+        progress_percent:
+          type: integer
+        updated_at: *id018
+      required:
+      - title
+      - episode
+      - position_seconds
+      - duration_seconds
+      - progress_percent
+      - updated_at
+    ContinueList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContinueItem'
+      required:
+      - items
+    Progress:
+      type: object
+      additionalProperties: false
+      properties:
+        title_id: *id017
+        episode_id:
+          type: string
+          format: uuid
+          nullable: true
+        position_seconds:
+          type: integer
+        duration_seconds:
+          type: integer
+        completed:
+          type: boolean
+        updated_at: *id018
+      required:
+      - title_id
+      - episode_id
+      - position_seconds
+      - duration_seconds
+      - completed
+      - updated_at
+    ProgressRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title_id: *id017
+        episode_id: *id017
+        position_seconds:
+          type: number
+          minimum: 0
+        duration_seconds:
+          type: number
+          minimum: 1
+          maximum: 172800
+      required:
+      - title_id
+      - position_seconds
+      - duration_seconds
+    HomeRow:
+      type: object
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+        kind:
+          type: string
+          enum:
+          - titles
+          - continue
+        title:
+          type: string
+        language:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TitleSummary'
+        continue:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContinueItem'
+      required:
+      - key
+      - kind
+      - title
+    Home:
+      type: object
+      additionalProperties: false
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/HomeRow'
+      required:
+      - rows

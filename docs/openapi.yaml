@@ -4,9 +4,24 @@ openapi: 3.0.3
 info:
   title: StreamAfrica API
   version: 0.3.0
-  description: 'Source of truth for the HTTP API. api/internal/contract runs on every CI build: it fails when a
-    handler is added, removed or changed without this file following (routes, methods, parameters and response shapes
-    are all checked).'
+  description: 'StreamAfrica HTTP API.
+
+
+    **Try it from this page**
+
+    1. Call **POST /v1/auth/register** (or **/v1/auth/login** if you already have an account). Copy `access_token`
+    from the response.
+
+    2. Click **Authorize** (top right), paste the token (no `Bearer ` prefix) and confirm.
+
+    3. Call anything marked with a padlock. Access tokens last 15 minutes: log in again when you see `token_expired`.
+
+
+    The browser keeps the refresh cookie for you, so **POST /v1/auth/refresh** works from this page. Verification
+    and reset emails land in Mailpit (http://localhost:8025) in local development.
+
+
+    This file is the contract: `api/internal/contract` fails CI when a handler and this file disagree.'
 servers:
 - url: http://localhost:8088/api
   description: through nginx (local)
