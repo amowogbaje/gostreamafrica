@@ -31,6 +31,8 @@ make migrate-up          # applies the baseline migration
 | Redis | localhost:6379 | password from `.env` |
 | Worker health | internal only (8081) | |
 
+The table shows the defaults from `.env.example`. Change any `*_HOST_PORT` in the "Host ports" block at the top of `.env` and re-run `make up`; the browser-facing URLs (`NEXT_PUBLIC_*`, `WEB_BASE_URL`, `AUTH_ALLOWED_ORIGINS`) are built from those values automatically. Only the left (host) side of a mapping changes: ports inside the containers (api 8080, web 3000, worker 8081) stay fixed.
+
 All ports bind to `127.0.0.1` by default. Set `BIND_ADDR=0.0.0.0` in `.env` to test from a phone on your LAN.
 
 ## Commands

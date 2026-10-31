@@ -35,8 +35,9 @@ explain: .env ## Show query plans for the main access patterns (run make seed-bu
 	$(PSQL) < api/seeds/explain_queries.sql
 
 docs: ## Show where the interactive API docs (Swagger UI) are
-	@echo "Swagger UI : http://localhost:8088/api/docs/    (direct: http://localhost:8080/docs/)"
-	@echo "Raw spec   : http://localhost:8088/api/docs/openapi.yaml"
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	echo "Swagger UI : http://localhost:$${NGINX_HOST_PORT:-8088}/api/docs/    (direct: http://localhost:$${API_HOST_PORT:-8080}/docs/)"; \
+	echo "Raw spec   : http://localhost:$${NGINX_HOST_PORT:-8088}/api/docs/openapi.yaml"
 
 docs-sync: ## After editing docs/openapi.yaml: refresh the copy embedded in the API binary
 	cp docs/openapi.yaml api/internal/apidocs/openapi.yaml
