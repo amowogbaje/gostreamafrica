@@ -1,5 +1,5 @@
 # ADR-0003: MinIO community images are no longer published
-Status: Accepted (temporary, local development only)
+Status: Superseded by ADR-0014 (local store is now SeaweedFS)
 
 ## Context
 The pull error `pull access denied for minio/minio` is real: MinIO stopped publishing community images in October 2025,

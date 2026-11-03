@@ -1,0 +1,6 @@
+# Mounted at /etc/seaweedfs/master.toml (local development only).
+# By default SeaweedFS pre-creates 7 volumes the first time a bucket is written (7 x 3 buckets = 21).
+# That exhausts the volume limit set in docker-compose.yml and uploads then fail with
+# "failed to find writable volumes". One volume per bucket is plenty for a laptop.
+[master.volume_growth]
+copy_1 = 1

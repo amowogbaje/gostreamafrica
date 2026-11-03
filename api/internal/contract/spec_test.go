@@ -83,6 +83,11 @@ func testConfig(s3Addr string) config.Config {
 		RefreshCookiePath: "/v1/auth", AllowedOrigins: []string{"http://localhost:3000"},
 		WebBaseURL: "http://localhost:8088", Argon2MemoryKiB: 64, Argon2Time: 1, Argon2Parallelism: 1,
 		CatalogHomeTTL: time.Minute, CatalogGenresTTL: time.Minute, APIDocsEnabled: true,
+		S3Endpoint: "http://" + s3Addr, S3Region: "us-east-1", S3AccessKey: "test-key", S3SecretKey: "test-secret",
+		S3BucketRaw: "media-raw", S3BucketHLS: "media-hls", S3BucketPublic: "media-public",
+		UploadMaxBytes: 8 << 30, UploadPartBytes: 64 << 20, UploadURLTTL: 15 * time.Minute, UploadAbandonAfter: 24 * time.Hour,
+		UploadSweepEvery: time.Hour, UploadMaxActive: 3, UploadDailyBytes: 32 << 30,
+		UploadMaxDurationSecs: 4 * 3600, UploadMaxWidth: 3840, UploadMaxHeight: 2160,
 	}
 }
 

@@ -7,7 +7,7 @@ ADRs 0001-0003 were written in Phase 0 Step 1, so later numbering starts at 0004
 |---|---|---|
 | 0001 | Monorepo with two Go modules | Accepted |
 | 0002 | Local stack choices | Accepted |
-| 0003 | MinIO community images are no longer published | Accepted (temporary; replacement planned) |
+| 0003 | MinIO community images are no longer published | Superseded by 0014 |
 | 0004 | Modular monolith in Go instead of microservices | Accepted |
 | 0005 | HLS delivery with a separate FFmpeg worker | Accepted |
 | 0006 | S3-compatible storage with signed URLs | Accepted |
@@ -18,3 +18,5 @@ ADRs 0001-0003 were written in Phase 0 Step 1, so later numbering starts at 0004
 | 0011 | Server-side sessions and argon2id passwords | Superseded by 0012 |
 | 0012 | Short-lived JWT access tokens and rotating refresh tokens | Accepted |
 | 0013 | Catalog read model: visibility, keyset pagination, epoch-versioned cache | Accepted |
+| 0014 | SeaweedFS replaces MinIO for local object storage | Accepted |
+| 0015 | A small standard-library S3 client instead of an SDK | Accepted |

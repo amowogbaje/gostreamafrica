@@ -1,5 +1,5 @@
 # Included from the root Makefile with: -include infra/make/ci.mk
-.PHONY: docker-build actionlint env-upgrade test-unit seed seed-bulk seed-bulk-clean explain docs docs-sync
+.PHONY: docker-build actionlint env-upgrade test-unit seed seed-bulk seed-bulk-clean explain docs docs-sync s3-check storage-ls dev-creator upload-test
 
 docker-build: ## Build the three production images locally (same as CI)
 	docker build -t streamafrica-api:local ./api
@@ -42,3 +42,17 @@ docs: ## Show where the interactive API docs (Swagger UI) are
 docs-sync: ## After editing docs/openapi.yaml: refresh the copy embedded in the API binary
 	cp docs/openapi.yaml api/internal/apidocs/openapi.yaml
 	@echo "synced. Rebuild the API (it restarts itself in dev) and run: make test"
+
+s3-check: ## Prove the object store supports multipart, presigned URLs, CORS, ranges (needs 'make up')
+	@sh infra/scripts/s3-check.sh
+
+storage-ls: ## List buckets and their sizes in the object store
+	@docker compose exec -T seaweedfs sh -c 'echo "s3.bucket.list" | weed shell -master=localhost:9333 2>/dev/null | grep size:'
+
+dev-creator: .env ## Make an account a creator and print a draft movie id to upload to (EMAIL=you@example.com)
+	$(LOCAL_ONLY)
+	@test -n "$(EMAIL)" || { echo "usage: make dev-creator EMAIL=you@example.com   (register that account first)"; exit 1; }
+	$(COMPOSE) exec -T postgres sh -c 'psql -q -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -v email="$(EMAIL)"' < api/seeds/dev_upload_creator.sql 2>&1 | sed -n 's/^.*NOTICE:  //p'
+
+upload-test: ## Upload a file through the API like a browser would (see docs/upload-flow.md): make upload-test ARGS="--email .. --password .. --title .. --file video.mp4"
+	@python3 infra/scripts/upload_client.py $(ARGS)

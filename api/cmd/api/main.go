@@ -52,6 +52,8 @@ func run() error {
 		return err
 	}
 
+	go application.Sweeper.Run(ctx) // abandoned-upload cleanup; stops when ctx is cancelled
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           application.Handler,

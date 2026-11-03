@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: StreamAfrica API
-  version: 0.3.0
+  version: 0.4.0
   description: 'StreamAfrica HTTP API.
 
 
@@ -33,6 +33,7 @@ tags:
 - name: me
 - name: catalog
 - name: library
+- name: creator
 paths:
   /healthz:
     get:
@@ -766,6 +767,245 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /v1/creator/uploads:
+    post:
+      tags:
+      - creator
+      summary: Start a resumable upload of a movie's video file (creators and admins)
+      description: 'Opens a multipart upload in object storage and returns presigned URLs for the first parts. The
+        video bytes never pass through this API: send each part with PUT straight to its URL, sending exactly the
+        `size_bytes` given for that part. URLs expire (see `urls_expire_at`); ask for fresh ones with
+        **POST /v1/creator/uploads/{id}/parts**. When every part is stored call **POST /v1/creator/uploads/{id}/complete**.
+        Limits: file size, unfinished uploads per creator and bytes per day are enforced here.'
+      operationId: createUpload
+      security: *id009
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUploadRequest'
+      responses:
+        '201':
+          description: upload started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadCreated'
+        '400': *id006
+        '401': *id010
+        '403':
+          description: Not a creator or admin (forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such title, or it is not yours (title_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The title already has a video (video_exists) or an unfinished upload (upload_in_progress)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413': *id002
+        '415': *id003
+        '422': *id007
+        '429': *id004
+        '502':
+          description: Object storage is unavailable (storage_unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/creator/uploads/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - creator
+      summary: An upload's state; while unfinished, also which parts are already stored (use it to resume)
+      operationId: getUpload
+      security: *id009
+      responses:
+        '200':
+          description: the upload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Upload'
+        '401': *id010
+        '403':
+          description: Not a creator or admin (forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such upload, or it is not yours (upload_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Object storage is unavailable (storage_unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+      - creator
+      summary: Cancel an unfinished upload and free its storage (cancelling twice is fine)
+      operationId: cancelUpload
+      security: *id009
+      responses:
+        '204':
+          description: cancelled
+        '401': *id010
+        '403':
+          description: Not a creator or admin (forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such upload, or it is not yours (upload_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Already completed, so it can no longer be cancelled (upload_not_cancellable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Object storage is unavailable (storage_unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/creator/uploads/{id}/parts:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - creator
+      summary: Fresh presigned URLs for specific parts (at most 20 per call)
+      operationId: presignUploadParts
+      security: *id009
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartsRequest'
+      responses:
+        '200':
+          description: presigned URLs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartsResponse'
+        '400': *id006
+        '401': *id010
+        '403':
+          description: Not a creator or admin (forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such upload, or it is not yours (upload_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The upload no longer accepts parts (upload_not_open) or has expired (upload_expired)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413': *id002
+        '415': *id003
+        '422': *id007
+        '429': *id004
+  /v1/creator/uploads/{id}/complete:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - creator
+      summary: Finish the upload, check the file and queue it for processing (safe to call again)
+      description: 'Checks that every part is stored with its exact size, assembles the file, verifies its size and
+        container signature, scans it, then queues a transcode job. A file that is refused ends the upload (422 with
+        the reason as `code`: size_mismatch, unsupported_container, container_mismatch, malware_detected). Missing
+        or wrong-sized parts give 422 upload_incomplete: send them, then call again. Codec, duration and resolution
+        are checked later by the worker; a refusal there shows up on **GET /v1/creator/uploads/{id}**.'
+      operationId: completeUpload
+      security: *id009
+      responses:
+        '202':
+          description: accepted; the job is queued and processing continues in the background
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Upload'
+        '401': *id010
+        '403':
+          description: Not a creator or admin (forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such upload, or it is not yours (upload_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The upload was rejected (upload_rejected), cancelled or expired (upload_closed, upload_expired), or its stored data is gone (upload_incomplete)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Parts missing or wrong size (upload_incomplete), or the file was refused (size_mismatch, unsupported_container, container_mismatch, malware_detected)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429': *id004
+        '502':
+          description: Object storage is unavailable (storage_unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503': *id005
 components:
   securitySchemes:
     bearerAuth:
@@ -1553,3 +1793,193 @@ components:
             $ref: '#/components/schemas/HomeRow'
       required:
       - rows
+    CreateUploadRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title_id:
+          type: string
+          format: uuid
+          description: A movie you own.
+        filename:
+          type: string
+          maxLength: 255
+          description: Original file name; the extension must be mp4, mov, mkv or webm.
+        content_type:
+          type: string
+          description: Optional. video/mp4, video/quicktime, video/x-matroska, video/webm or application/octet-stream.
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Exact size of the file. The maximum is set by the server (8 GiB by default).
+      required:
+      - title_id
+      - filename
+      - size_bytes
+    UploadJob:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+          - queued
+          - running
+          - succeeded
+          - failed
+          - canceled
+        stage:
+          type: string
+        percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        error:
+          type: string
+      required:
+      - id
+      - state
+    StoredPart:
+      type: object
+      additionalProperties: false
+      properties:
+        part_number:
+          type: integer
+          minimum: 1
+        size_bytes:
+          type: integer
+          format: int64
+      required:
+      - part_number
+      - size_bytes
+    Upload:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        title_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum:
+          - initiated
+          - uploaded
+          - processing
+          - ready
+          - rejected
+          - aborted
+          - expired
+        part_size_bytes:
+          type: integer
+          format: int64
+          description: Every part has this size except the last, which holds the remainder.
+        part_count:
+          type: integer
+        reject_code:
+          type: string
+        reject_reason:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          description: An upload not completed by then is cancelled and its storage freed.
+        completed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        job:
+          $ref: '#/components/schemas/UploadJob'
+        stored_parts:
+          type: array
+          description: Only while status is initiated. Parts already stored, so an interrupted client can resume.
+          items:
+            $ref: '#/components/schemas/StoredPart'
+      required:
+      - id
+      - title_id
+      - filename
+      - content_type
+      - size_bytes
+      - status
+      - part_size_bytes
+      - part_count
+      - expires_at
+      - created_at
+    PartURL:
+      type: object
+      additionalProperties: false
+      properties:
+        part_number:
+          type: integer
+          minimum: 1
+        url:
+          type: string
+          format: uri
+          description: PUT the part here. The body must be exactly size_bytes long (the length is signed).
+        size_bytes:
+          type: integer
+          format: int64
+      required:
+      - part_number
+      - url
+      - size_bytes
+    UploadCreated:
+      type: object
+      additionalProperties: false
+      properties:
+        upload:
+          $ref: '#/components/schemas/Upload'
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartURL'
+        urls_expire_at:
+          type: string
+          format: date-time
+      required:
+      - upload
+      - parts
+      - urls_expire_at
+    PartsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        part_numbers:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: integer
+            minimum: 1
+      required:
+      - part_numbers
+    PartsResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartURL'
+        urls_expire_at:
+          type: string
+          format: date-time
+      required:
+      - parts
+      - urls_expire_at

@@ -12,7 +12,7 @@ map $uri $media_cache_control {
 
 upstream web_upstream   { server web:3000;   keepalive 16; }
 upstream api_upstream   { server api:8080;   keepalive 16; }
-upstream minio_upstream { server minio:9000; keepalive 16; }
+upstream s3_upstream    { server seaweedfs:8333; keepalive 16; }
 
 server {
     listen 80;
@@ -39,16 +39,16 @@ server {
     }
 
     # CDN stand-in for HLS. media-hls is private: unsigned requests get 403 from
-    # MinIO. Signed expiring URLs are designed in a later step.
+    # the object store (SeaweedFS). Signed expiring URLs are designed in a later step.
     location /hls/ {
         include /etc/nginx/snippets/media.conf;
-        proxy_pass http://minio_upstream/${S3_BUCKET_HLS}/;
+        proxy_pass http://s3_upstream/${S3_BUCKET_HLS}/;
     }
 
     # Anonymous-read bucket (posters, thumbnails).
     location /public/ {
         include /etc/nginx/snippets/media.conf;
-        proxy_pass http://minio_upstream/${S3_BUCKET_PUBLIC}/;
+        proxy_pass http://s3_upstream/${S3_BUCKET_PUBLIC}/;
     }
 
     # Everything else is the Next.js app (WebSocket upgrade needed for dev HMR).

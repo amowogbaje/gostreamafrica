@@ -27,6 +27,7 @@ type stack struct {
 	router   routers.Router
 	pool     *pgxpool.Pool
 	mail     *fakeMailer
+	objs     *objStub
 	covered  map[string]bool
 	statuses map[string]bool
 }
@@ -185,15 +186,16 @@ func newStack(t *testing.T) *stack {
 		}
 	}()
 	mail := &fakeMailer{}
+	objs := newObjStub()
 	application, err := app.New(app.Options{
 		Config: testConfig(ln.Addr().String()), Pool: pool, Redis: rdb, Logger: quiet(),
-		Mailer: mail, SyncEmail: true, CacheNamespace: "contract-" + randHex(5),
+		Mailer: mail, SyncEmail: true, CacheNamespace: "contract-" + randHex(5), Objects: objs,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, router := loadSpec(t)
-	return &stack{t: t, app: application, router: router, pool: pool, mail: mail,
+	return &stack{t: t, app: application, router: router, pool: pool, mail: mail, objs: objs,
 		covered: map[string]bool{}, statuses: map[string]bool{}}
 }
 
@@ -436,6 +438,127 @@ func TestResponsesMatchSpec(t *testing.T) {
 	}
 	if throttled == 0 {
 		t.Fatal("the progress endpoint was never throttled")
+	}
+
+	// ---- creator uploads
+	up1 := mk("upload-film-1", "movie", "en", "draft", 0)
+	up2 := mk("upload-film-2", "movie", "en", "draft", 0)
+	up3 := mk("upload-film-3", "movie", "en", "draft", 0)
+	const mib = int64(1 << 20)
+	create := func(title string, size int64) string {
+		return `{"title_id":"` + title + `","filename":"My Film.mp4","content_type":"video/mp4","size_bytes":` + fmt.Sprint(size) + `}`
+	}
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(up1, 150*mib), wantStatus: 401})
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(up1, 150*mib), bearer: ada.AccessToken, wantStatus: 403}) // a viewer
+	// a second creator takes the validation errors (creating uploads is limited to 10 an hour each)
+	otherEmail := "other-creator-" + randHex(4) + "@example.com"
+	otherID := jsonOf[authResp](t, s.do(call{method: "POST", path: "/v1/auth/register", body: reg(otherEmail), wantStatus: 201})).User.ID
+	s.exec(`UPDATE users SET role = 'creator' WHERE id = $1::uuid`, otherID)
+	other := jsonOf[authResp](t, s.do(call{method: "POST", path: "/v1/auth/login", body: `{"email":"` + otherEmail + `","password":"` + pw + `"}`, wantStatus: 200}))
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: `{"title_id":`, bearer: other.AccessToken, badRequest: true, wantStatus: 400})
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(up1, 150*mib), bearer: other.AccessToken,
+		headers: map[string]string{"Content-Type": "text/plain"}, badRequest: true, wantStatus: 415})
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: `{"title_id":"` + up1 + `","filename":"` + strings.Repeat("a", 5000) + `.mp4","size_bytes":1}`,
+		bearer: other.AccessToken, badRequest: true, wantStatus: 413})
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: `{"title_id":"nope","filename":"a.avi","size_bytes":0}`, bearer: other.AccessToken, badRequest: true, wantStatus: 422})
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: create("00000000-0000-4000-8000-000000000000", 150*mib), bearer: other.AccessToken, wantStatus: 404})
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(movie, 150*mib), bearer: creator.AccessToken, wantStatus: 409}) // already has a video
+	s.objs.down = true
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(up1, 150*mib), bearer: creator.AccessToken, wantStatus: 502})
+	s.objs.down = false
+	rec = s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(up1, 150*mib), bearer: creator.AccessToken, wantStatus: 201})
+	type createdResp struct {
+		Upload struct {
+			ID        string `json:"id"`
+			PartCount int    `json:"part_count"`
+		} `json:"upload"`
+		Parts []struct {
+			PartNumber int    `json:"part_number"`
+			URL        string `json:"url"`
+			SizeBytes  int64  `json:"size_bytes"`
+		} `json:"parts"`
+	}
+	up := jsonOf[createdResp](t, rec)
+	if up.Upload.PartCount != 3 || len(up.Parts) != 3 || up.Parts[2].SizeBytes != 22*mib {
+		t.Fatalf("150 MiB must be 3 parts of 64, 64 and 22 MiB: %s", rec.Body.String())
+	}
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(up1, 150*mib), bearer: creator.AccessToken, wantStatus: 409}) // one unfinished upload per title
+	base := "/v1/creator/uploads/" + up.Upload.ID
+
+	s.do(call{method: "GET", path: base, wantStatus: 401})
+	s.do(call{method: "GET", path: base, bearer: ada.AccessToken, wantStatus: 403})
+	s.do(call{method: "GET", path: "/v1/creator/uploads/00000000-0000-4000-8000-000000000000", bearer: creator.AccessToken, wantStatus: 404})
+	s.do(call{method: "GET", path: "/v1/creator/uploads/garbage", bearer: creator.AccessToken, badRequest: true, wantStatus: 404})
+	rec = s.do(call{method: "GET", path: base, bearer: creator.AccessToken, wantStatus: 200})
+	if !strings.Contains(rec.Body.String(), `"stored_parts":[]`) {
+		t.Fatalf("an unfinished upload lists its stored parts: %s", rec.Body.String())
+	}
+	s.objs.store(up.Upload.ID+"/source.mp4", 64*mib)
+	rec = s.do(call{method: "GET", path: base, bearer: creator.AccessToken, wantStatus: 200})
+	if !strings.Contains(rec.Body.String(), `"part_number":1`) {
+		t.Fatalf("part 1 is stored: %s", rec.Body.String())
+	}
+
+	s.do(call{method: "POST", path: base + "/parts", body: `{"part_numbers":[2,3]}`, wantStatus: 401})
+	s.do(call{method: "POST", path: base + "/parts", body: `{"part_numbers":[2,3]}`, bearer: ada.AccessToken, wantStatus: 403})
+	s.do(call{method: "POST", path: base + "/parts", body: `{"part_numbers":[2,3]}`, bearer: creator.AccessToken, wantStatus: 200})
+	s.do(call{method: "POST", path: base + "/parts", body: `{"part_numbers":[9]}`, bearer: creator.AccessToken, wantStatus: 422})
+	s.do(call{method: "POST", path: base + "/parts", body: `{"part_numbers":[`, bearer: creator.AccessToken, badRequest: true, wantStatus: 400})
+	s.do(call{method: "POST", path: "/v1/creator/uploads/00000000-0000-4000-8000-000000000000/parts", body: `{"part_numbers":[1]}`, bearer: creator.AccessToken, wantStatus: 404})
+
+	s.do(call{method: "POST", path: base + "/complete", wantStatus: 401})
+	s.do(call{method: "POST", path: base + "/complete", bearer: ada.AccessToken, wantStatus: 403})
+	s.do(call{method: "POST", path: base + "/complete", bearer: creator.AccessToken, wantStatus: 422}) // parts 2 and 3 are missing
+	s.do(call{method: "POST", path: "/v1/creator/uploads/00000000-0000-4000-8000-000000000000/complete", bearer: creator.AccessToken, wantStatus: 404})
+	s.objs.store(up.Upload.ID+"/source.mp4", 64*mib, 64*mib, 22*mib)
+	rec = s.do(call{method: "POST", path: base + "/complete", bearer: creator.AccessToken, wantStatus: 202})
+	if !strings.Contains(rec.Body.String(), `"status":"uploaded"`) || !strings.Contains(rec.Body.String(), `"state":"queued"`) {
+		t.Fatalf("complete must queue a job: %s", rec.Body.String())
+	}
+	s.do(call{method: "POST", path: base + "/complete", bearer: creator.AccessToken, wantStatus: 202}) // safe to repeat
+	s.do(call{method: "POST", path: base + "/parts", body: `{"part_numbers":[1]}`, bearer: creator.AccessToken, wantStatus: 409})
+	s.do(call{method: "DELETE", path: base, bearer: creator.AccessToken, wantStatus: 409})
+	rec = s.do(call{method: "GET", path: base, bearer: creator.AccessToken, wantStatus: 200})
+	if !strings.Contains(rec.Body.String(), `"state":"queued"`) || strings.Contains(rec.Body.String(), "stored_parts") {
+		t.Fatalf("a completed upload shows its job and no stored parts: %s", rec.Body.String())
+	}
+
+	// a refused file: rejected, explained, and not completable again
+	rec = s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(up2, 10*mib), bearer: creator.AccessToken, wantStatus: 201})
+	bad := jsonOf[createdResp](t, rec)
+	s.objs.store(bad.Upload.ID+"/source.mp4", 10*mib)
+	s.objs.setHead(bad.Upload.ID+"/source.mp4", []byte("MZ this is not a video file at all"))
+	s.do(call{method: "POST", path: "/v1/creator/uploads/" + bad.Upload.ID + "/complete", bearer: creator.AccessToken, wantStatus: 422})
+	s.do(call{method: "POST", path: "/v1/creator/uploads/" + bad.Upload.ID + "/complete", bearer: creator.AccessToken, wantStatus: 409})
+	rec = s.do(call{method: "GET", path: "/v1/creator/uploads/" + bad.Upload.ID, bearer: creator.AccessToken, wantStatus: 200})
+	if !strings.Contains(rec.Body.String(), `"reject_code":"unsupported_container"`) {
+		t.Fatalf("%s", rec.Body.String())
+	}
+
+	// cancelling
+	rec = s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(up3, 10*mib), bearer: creator.AccessToken, wantStatus: 201})
+	gone := jsonOf[createdResp](t, rec)
+	s.do(call{method: "DELETE", path: "/v1/creator/uploads/" + gone.Upload.ID, wantStatus: 401})
+	s.do(call{method: "DELETE", path: "/v1/creator/uploads/" + gone.Upload.ID, bearer: ada.AccessToken, wantStatus: 403})
+	s.do(call{method: "DELETE", path: "/v1/creator/uploads/00000000-0000-4000-8000-000000000000", bearer: creator.AccessToken, wantStatus: 404})
+	s.do(call{method: "DELETE", path: "/v1/creator/uploads/" + gone.Upload.ID, bearer: creator.AccessToken, wantStatus: 204})
+	s.do(call{method: "DELETE", path: "/v1/creator/uploads/" + gone.Upload.ID, bearer: creator.AccessToken, wantStatus: 204}) // twice is fine
+
+	// another creator cannot see or touch it
+	s.do(call{method: "GET", path: base, bearer: other.AccessToken, wantStatus: 404})
+	s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(up1, 10*mib), bearer: other.AccessToken, wantStatus: 404}) // not their title
+	limited := 0
+	for i := 0; i < 12; i++ {
+		rec := s.do(call{method: "POST", path: "/v1/creator/uploads", body: `{}`, bearer: other.AccessToken, badRequest: true})
+		if rec.Code == 429 {
+			limited++
+			if rec.Header().Get("Retry-After") == "" {
+				t.Fatal("429 without Retry-After")
+			}
+		}
+	}
+	if limited == 0 {
+		t.Fatal("creating uploads was never rate limited")
 	}
 
 	// ---- every operation in the spec must have been exercised at least once

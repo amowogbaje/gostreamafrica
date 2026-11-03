@@ -99,7 +99,7 @@ sequenceDiagram
 | FFmpeg worker | Yes | No (no FFmpeg, no long-running processes) | Yes, separate container, limited concurrency |
 | PostgreSQL | Compose `postgres:16` | None (cPanel offers MySQL only, unused) | Managed Postgres, `sslmode=require`, backups |
 | Redis | Compose container | None | Managed or container with password and persistence |
-| Object storage | MinIO-compatible (ADR-0003) | None, reads media from the cloud CDN | Cloudflare R2 (or S3) |
+| Object storage | SeaweedFS (ADR-0014) | None, reads media from the cloud CDN | Cloudflare R2 (or S3) |
 | CDN | nginx on :8088 | Cloud CDN URL | Cloudflare in front of R2 |
 | Email | Mailpit | None | Transactional email provider over SMTP |
 | Payments | Paystack test keys | Test keys through staging API | Test keys in staging, live keys in production |
@@ -110,5 +110,5 @@ sequenceDiagram
 ## Open items
 - ADR-0008 (pricing) and ADR-0010 (licensing) are Proposed and need your decision.
 - The home page renders on the server today. A cPanel static demo needs client-side fetching, so decide that when the demo is built.
-- A local replacement for the MinIO mirror (SeaweedFS or Garage) is unapproved.
+- Prompt 2.3 must decide how nginx reads the private HLS bucket (see ADR-0014).
 - `docker-compose.prod.yml` and the production safety check are not built yet.

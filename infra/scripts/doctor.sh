@@ -13,7 +13,7 @@ for s in $(docker compose ps -a --format '{{.Service}} {{.Health}} {{.State}}' |
   echo "---- $s"; docker compose logs --tail=20 "$s"
 done
 echo; echo "== ports in use on this host"
-for p in "${WEB_HOST_PORT:-3000}" "${POSTGRES_HOST_PORT:-5432}" "${REDIS_HOST_PORT:-6379}" "${MAILPIT_UI_HOST_PORT:-8025}" "${MAILPIT_SMTP_HOST_PORT:-1025}" "${API_HOST_PORT:-8080}" "${NGINX_HOST_PORT:-8088}" "${MINIO_API_HOST_PORT:-9000}" "${MINIO_CONSOLE_HOST_PORT:-9001}"; do
+for p in "${WEB_HOST_PORT:-3000}" "${POSTGRES_HOST_PORT:-5432}" "${REDIS_HOST_PORT:-6379}" "${MAILPIT_UI_HOST_PORT:-8025}" "${MAILPIT_SMTP_HOST_PORT:-1025}" "${API_HOST_PORT:-8080}" "${NGINX_HOST_PORT:-8088}" "${S3_HOST_PORT:-8333}"; do
   (ss -ltn 2>/dev/null || netstat -an 2>/dev/null) | grep -q "[:.]$p " && echo "port $p is IN USE"
 done
 exit 0

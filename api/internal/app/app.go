@@ -14,12 +14,14 @@ import (
 	"streamafrica/api/internal/apidocs"
 	"streamafrica/api/internal/auth"
 	"streamafrica/api/internal/catalog"
+	"streamafrica/api/internal/creators"
 	"streamafrica/api/internal/platform/config"
 	"streamafrica/api/internal/platform/database"
 	"streamafrica/api/internal/platform/health"
 	"streamafrica/api/internal/platform/httpx"
 	"streamafrica/api/internal/platform/ratelimit"
 	"streamafrica/api/internal/platform/redisx"
+	"streamafrica/api/internal/platform/s3"
 	"streamafrica/api/internal/platform/server"
 )
 
@@ -30,18 +32,24 @@ type Options struct {
 	Pool           *pgxpool.Pool
 	Redis          *redis.Client
 	Logger         *slog.Logger
-	Mailer         auth.Mailer      // default: SMTP from Config
-	Now            func() time.Time // default: time.Now
-	SyncEmail      bool             // send email inline (tests)
-	CacheNamespace string           // Redis key prefix for the catalog cache (default "catalog")
+	Mailer         auth.Mailer          // default: SMTP from Config
+	Now            func() time.Time     // default: time.Now
+	SyncEmail      bool                 // send email inline (tests)
+	CacheNamespace string               // Redis key prefix for the catalog cache (default "catalog")
+	Objects        creators.ObjectStore // default: the S3 client built from Config
+	Scanner        creators.Scanner     // default: no scanning (logged at start-up)
 	OnRoute        func(path string, methods []string)
 }
 
 // App is the assembled application.
 type App struct {
-	Handler http.Handler
-	Auth    *auth.Service
-	Catalog *catalog.Service
+	Handler  http.Handler
+	Auth     *auth.Service
+	Catalog  *catalog.Service
+	Creators *creators.Service
+	// Sweeper cleans up abandoned uploads. Start it with `go app.Sweeper.Run(ctx)`; it is not
+	// started here so tests control when it runs.
+	Sweeper *creators.Sweeper
 }
 
 // New builds the application.
@@ -106,7 +114,31 @@ func New(o Options) (*App, error) {
 		Optional: authHandler.OptionalAuthenticate(),
 	}, limiter, o.Logger)
 
-	mounts := []func(httpx.Mux){authHandler.Mount, catalogHandler.Mount}
+	objects := o.Objects
+	if objects == nil {
+		client, err := s3.New(s3.Config{Endpoint: cfg.S3Endpoint, PublicEndpoint: cfg.S3PublicEndpoint, Region: cfg.S3Region,
+			AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey})
+		if err != nil {
+			return nil, fmt.Errorf("object storage: %w", err)
+		}
+		objects = client
+	}
+	scanner := o.Scanner
+	if scanner == nil {
+		scanner = creators.NoopScanner{}
+		o.Logger.Warn("uploads are NOT virus-scanned: no scanner is configured (fine for local development only)")
+	}
+	creatorStore := creators.NewPGStore(o.Pool)
+	creatorSvc := creators.NewService(creatorStore, objects, scanner, o.Logger, now, creators.Config{
+		RawBucket: cfg.S3BucketRaw, MaxBytes: cfg.UploadMaxBytes, PartBytes: cfg.UploadPartBytes, URLTTL: cfg.UploadURLTTL,
+		AbandonAfter: cfg.UploadAbandonAfter, MaxActive: cfg.UploadMaxActive, DailyBytes: cfg.UploadDailyBytes,
+		Policy: creators.DefaultPolicy(cfg.UploadMaxDurationSecs, cfg.UploadMaxWidth, cfg.UploadMaxHeight),
+	})
+	creatorHandler := creators.NewHandler(creatorSvc, authHandler.Authenticate(), limiter, o.Logger)
+	sweeper := creators.NewSweeper(creatorStore, objects, o.Logger, now, creators.SweeperConfig{
+		Bucket: cfg.S3BucketRaw, AbandonAfter: cfg.UploadAbandonAfter, Every: cfg.UploadSweepEvery})
+
+	mounts := []func(httpx.Mux){authHandler.Mount, catalogHandler.Mount, creatorHandler.Mount}
 	if cfg.APIDocsEnabled {
 		docs, err := apidocs.New()
 		if err != nil {
@@ -116,8 +148,10 @@ func New(o Options) (*App, error) {
 	}
 
 	return &App{
-		Auth:    authSvc,
-		Catalog: catalogSvc,
+		Auth:     authSvc,
+		Catalog:  catalogSvc,
+		Creators: creatorSvc,
+		Sweeper:  sweeper,
 		Handler: server.NewHandler(server.Deps{
 			Logger: o.Logger,
 			Dependencies: []health.Dependency{

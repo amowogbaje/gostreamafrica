@@ -12,7 +12,9 @@ func base() map[string]string {
 	return map[string]string{
 		"DATABASE_URL":    "postgres://u:p@postgres:5432/db?sslmode=disable",
 		"REDIS_URL":       "redis://:pw@redis:6379/0",
-		"S3_ENDPOINT":     "http://minio:9000",
+		"S3_ENDPOINT":     "http://seaweedfs:8333",
+		"S3_ACCESS_KEY":   "key",
+		"S3_SECRET_KEY":   "secret",
 		"AUTH_JWT_SECRET": DevJWTSecret,
 		"SMTP_HOST":       "mailpit",
 	}
@@ -23,7 +25,7 @@ func TestLoad_OK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.PostgresAddr != "postgres:5432" || cfg.RedisAddr != "redis:6379" || cfg.S3Addr != "minio:9000" {
+	if cfg.PostgresAddr != "postgres:5432" || cfg.RedisAddr != "redis:6379" || cfg.S3Addr != "seaweedfs:8333" {
 		t.Fatalf("bad addrs: %+v", cfg)
 	}
 	if cfg.HTTPAddr != ":8080" || cfg.Env != "local" || cfg.LogLevel != "info" {
@@ -109,7 +111,7 @@ func TestLoad_DefaultPorts(t *testing.T) {
 }
 
 func TestLoad_MissingAndInvalid(t *testing.T) {
-	_, err := Load(env(map[string]string{"DATABASE_URL": "postgres://u:secretpw@:5432/db", "S3_ENDPOINT": "http://minio:9000"}))
+	_, err := Load(env(map[string]string{"DATABASE_URL": "postgres://u:secretpw@:5432/db", "S3_ENDPOINT": "http://seaweedfs:8333"}))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -170,5 +172,57 @@ func TestLoad_APIDocsToggle(t *testing.T) {
 		if c.wantErr && !strings.Contains(err.Error(), "API_DOCS_ENABLED") {
 			t.Errorf("error must name the variable: %v", err)
 		}
+	}
+}
+
+func TestLoad_StorageAndUploadDefaults(t *testing.T) {
+	cfg, err := Load(env(base()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.S3Endpoint != "http://seaweedfs:8333" || cfg.S3PublicEndpoint != cfg.S3Endpoint || cfg.S3Region != "us-east-1" ||
+		cfg.S3BucketRaw != "media-raw" || cfg.S3BucketHLS != "media-hls" || cfg.S3BucketPublic != "media-public" {
+		t.Fatalf("bad storage defaults: %+v", cfg)
+	}
+	if cfg.UploadMaxBytes != 8<<30 || cfg.UploadPartBytes != 64<<20 || cfg.UploadURLTTL != 15*time.Minute ||
+		cfg.UploadAbandonAfter != 24*time.Hour || cfg.UploadMaxActive != 3 || cfg.UploadMaxDurationSecs != 240*60 ||
+		cfg.UploadMaxHeight != 2160 || cfg.UploadMaxWidth != 3840 {
+		t.Fatalf("bad upload defaults: %+v", cfg)
+	}
+}
+
+func TestLoad_StorageValidation(t *testing.T) {
+	cases := map[string]struct {
+		set  map[string]string
+		want string
+	}{
+		"missing access key":      {map[string]string{"S3_ACCESS_KEY": ""}, "S3_ACCESS_KEY is required"},
+		"missing secret key":      {map[string]string{"S3_SECRET_KEY": ""}, "S3_SECRET_KEY is required"},
+		"public endpoint a path":  {map[string]string{"S3_PUBLIC_ENDPOINT": "http://localhost:8333/x"}, "S3_PUBLIC_ENDPOINT must be an http(s) URL without a path"},
+		"public endpoint no host": {map[string]string{"S3_PUBLIC_ENDPOINT": "localhost"}, "S3_PUBLIC_ENDPOINT must be an http(s) URL without a path"},
+		"part too small":          {map[string]string{"UPLOAD_PART_BYTES": "5242880", "UPLOAD_MAX_BYTES": "68719476736"}, "at most 10000 parts"},
+		"part below s3 minimum":   {map[string]string{"UPLOAD_PART_BYTES": "1048576"}, "UPLOAD_PART_BYTES must be an integer"},
+		"max bytes not a number":  {map[string]string{"UPLOAD_MAX_BYTES": "lots"}, "UPLOAD_MAX_BYTES must be an integer"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := base()
+			for k, v := range c.set {
+				m[k] = v
+			}
+			_, err := Load(env(m))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want an error containing %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+func TestLoad_PublicEndpointOverride(t *testing.T) {
+	m := base()
+	m["S3_PUBLIC_ENDPOINT"] = "http://localhost:8333/"
+	cfg, err := Load(env(m))
+	if err != nil || cfg.S3PublicEndpoint != "http://localhost:8333" || cfg.S3Endpoint != "http://seaweedfs:8333" {
+		t.Fatalf("got %+v, %v", cfg, err)
 	}
 }

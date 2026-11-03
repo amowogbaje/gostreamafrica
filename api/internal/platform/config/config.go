@@ -50,6 +50,28 @@ type Config struct {
 	CatalogHomeTTL   time.Duration
 	CatalogGenresTTL time.Duration
 
+	// --- object storage (plain S3 API; SeaweedFS locally, R2 or S3 in the cloud: ADR-0006, ADR-0014)
+	S3Endpoint       string // URL the API itself uses, for example http://seaweedfs:8333
+	S3PublicEndpoint string // URL the browser uses; presigned URLs are signed for this host
+	S3Region         string
+	S3AccessKey      string // secret
+	S3SecretKey      string // secret
+	S3BucketRaw      string
+	S3BucketHLS      string
+	S3BucketPublic   string
+
+	// --- creator uploads (Phase 2)
+	UploadMaxBytes        int64         // largest accepted source file
+	UploadPartBytes       int64         // multipart part size handed to clients
+	UploadURLTTL          time.Duration // lifetime of one presigned part URL
+	UploadAbandonAfter    time.Duration // an unfinished upload is aborted after this long
+	UploadSweepEvery      time.Duration
+	UploadMaxActive       int   // unfinished uploads one creator may have at once
+	UploadDailyBytes      int64 // bytes one creator may start uploading per rolling 24 hours
+	UploadMaxDurationSecs int   // longest accepted video, enforced by the worker probe
+	UploadMaxWidth        int
+	UploadMaxHeight       int
+
 	// APIDocsEnabled serves Swagger UI and the spec at /docs/. On by default only for APP_ENV=local.
 	APIDocsEnabled bool
 }
@@ -163,6 +185,51 @@ func Load(getenv func(string) string) (Config, error) {
 	// --- catalog cache
 	cfg.CatalogHomeTTL = time.Duration(intIn("CATALOG_HOME_TTL_SECONDS", "300", 10, 3600)) * time.Second
 	cfg.CatalogGenresTTL = time.Duration(intIn("CATALOG_GENRES_TTL_SECONDS", "600", 10, 86400)) * time.Second
+
+	// --- object storage
+	cfg.S3Endpoint = strings.TrimRight(strings.TrimSpace(getenv("S3_ENDPOINT")), "/")
+	cfg.S3PublicEndpoint = strings.TrimRight(get("S3_PUBLIC_ENDPOINT", cfg.S3Endpoint), "/")
+	for _, kv := range [][2]string{{"S3_ENDPOINT", cfg.S3Endpoint}, {"S3_PUBLIC_ENDPOINT", cfg.S3PublicEndpoint}} {
+		if u, err := url.Parse(kv[1]); kv[1] != "" && (err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "") {
+			errs = append(errs, fmt.Errorf("%s must be an http(s) URL without a path", kv[0]))
+		}
+	}
+	cfg.S3Region = get("S3_REGION", "us-east-1")
+	cfg.S3AccessKey = strings.TrimSpace(getenv("S3_ACCESS_KEY"))
+	cfg.S3SecretKey = strings.TrimSpace(getenv("S3_SECRET_KEY"))
+	if cfg.S3AccessKey == "" {
+		errs = append(errs, errors.New("S3_ACCESS_KEY is required"))
+	}
+	if cfg.S3SecretKey == "" {
+		errs = append(errs, errors.New("S3_SECRET_KEY is required"))
+	}
+	cfg.S3BucketRaw = get("S3_BUCKET_RAW", "media-raw")
+	cfg.S3BucketHLS = get("S3_BUCKET_HLS", "media-hls")
+	cfg.S3BucketPublic = get("S3_BUCKET_PUBLIC", "media-public")
+
+	// --- creator uploads
+	const mib = 1 << 20
+	int64In := func(key, def string, lo, hi int64) int64 {
+		n, err := strconv.ParseInt(get(key, def), 10, 64)
+		if err != nil || n < lo || n > hi {
+			errs = append(errs, fmt.Errorf("%s must be an integer from %d to %d", key, lo, hi))
+			n, _ = strconv.ParseInt(def, 10, 64)
+		}
+		return n
+	}
+	cfg.UploadMaxBytes = int64In("UPLOAD_MAX_BYTES", "8589934592", 1*mib, 64<<30)
+	cfg.UploadPartBytes = int64In("UPLOAD_PART_BYTES", "67108864", 5*mib, 512*mib) // S3 minimum part is 5 MiB
+	if cfg.UploadPartBytes > 0 && (cfg.UploadMaxBytes+cfg.UploadPartBytes-1)/cfg.UploadPartBytes > 10000 {
+		errs = append(errs, errors.New("UPLOAD_PART_BYTES is too small: S3 allows at most 10000 parts per upload, raise it or lower UPLOAD_MAX_BYTES"))
+	}
+	cfg.UploadURLTTL = time.Duration(intIn("UPLOAD_URL_TTL_MINUTES", "15", 1, 60)) * time.Minute
+	cfg.UploadAbandonAfter = time.Duration(intIn("UPLOAD_ABANDON_HOURS", "24", 1, 168)) * time.Hour
+	cfg.UploadSweepEvery = time.Duration(intIn("UPLOAD_SWEEP_MINUTES", "60", 1, 1440)) * time.Minute
+	cfg.UploadMaxActive = intIn("UPLOAD_MAX_ACTIVE_PER_CREATOR", "3", 1, 50)
+	cfg.UploadDailyBytes = int64In("UPLOAD_DAILY_BYTES_PER_CREATOR", "34359738368", 1*mib, 1<<50)
+	cfg.UploadMaxDurationSecs = intIn("UPLOAD_MAX_DURATION_MINUTES", "240", 1, 1440) * 60
+	cfg.UploadMaxWidth = intIn("UPLOAD_MAX_WIDTH", "3840", 16, 16384)
+	cfg.UploadMaxHeight = intIn("UPLOAD_MAX_HEIGHT", "2160", 16, 16384)
 
 	// --- API documentation page
 	cfg.APIDocsEnabled = cfg.Env == "local"

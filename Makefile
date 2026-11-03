@@ -20,7 +20,7 @@ up: .env ## Build and start the whole stack in the background
 down: ## Stop the stack (keeps volumes)
 	$(COMPOSE) down
 
-clean: ## Stop the stack and DELETE all volumes (db, redis, minio data)
+clean: ## Stop the stack and DELETE all volumes (db, redis, object storage)
 	$(COMPOSE) down -v
 
 logs: ## Tail logs (usage: make logs s=api)
