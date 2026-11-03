@@ -185,6 +185,11 @@ services:
       APP_ENV: ${APP_ENV}
       WORKER_HEALTH_ADDR: ":8081"
       WORKER_LOG_LEVEL: ${WORKER_LOG_LEVEL}
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      WORKER_FFMPEG_THREADS: ${WORKER_FFMPEG_THREADS:-2}
+      WORKER_X264_PRESET: ${WORKER_X264_PRESET:-veryfast}
+      WORKER_TEMP_DIR: /scratch
       S3_ENDPOINT: http://seaweedfs:8333
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
@@ -197,6 +202,7 @@ services:
       - ./worker:/app
       - gomod_cache:/go/pkg/mod
       - worker_gobuild:/root/.cache/go-build
+      - worker_scratch:/scratch
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -296,6 +302,7 @@ volumes:
   pgdata:
   redisdata:
   seaweeddata:
+  worker_scratch:
   gomod_cache:
   api_gobuild:
   worker_gobuild:

@@ -64,7 +64,7 @@ func TestCreateMultipartUpload(t *testing.T) {
 		if r.Header.Get("Content-Type") != "video/mp4" {
 			t.Errorf("Content-Type %q not forwarded", r.Header.Get("Content-Type"))
 		}
-		io.WriteString(w, `<InitiateMultipartUploadResult><Bucket>media-raw</Bucket><Key>abc/source.mp4</Key><UploadId>UP123</UploadId></InitiateMultipartUploadResult>`)
+		_, _ = io.WriteString(w, `<InitiateMultipartUploadResult><Bucket>media-raw</Bucket><Key>abc/source.mp4</Key><UploadId>UP123</UploadId></InitiateMultipartUploadResult>`)
 	})
 	id, err := c.CreateMultipartUpload(context.Background(), "media-raw", "abc/source.mp4", "video/mp4")
 	if err != nil || id != "UP123" {
@@ -106,7 +106,7 @@ func TestListParts_Paginates(t *testing.T) {
 			t.Errorf("missing uploadId: %v", q)
 		}
 		if q.Get("part-number-marker") == "" {
-			io.WriteString(w, `<ListPartsResult><IsTruncated>true</IsTruncated><NextPartNumberMarker>2</NextPartNumberMarker>
+			_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>true</IsTruncated><NextPartNumberMarker>2</NextPartNumberMarker>
 				<Part><PartNumber>2</PartNumber><ETag>"b"</ETag><Size>20</Size></Part>
 				<Part><PartNumber>1</PartNumber><ETag>"a"</ETag><Size>10</Size></Part></ListPartsResult>`)
 			return
@@ -114,7 +114,7 @@ func TestListParts_Paginates(t *testing.T) {
 		if q.Get("part-number-marker") != "2" {
 			t.Errorf("wrong marker %q", q.Get("part-number-marker"))
 		}
-		io.WriteString(w, `<ListPartsResult><IsTruncated>false</IsTruncated><Part><PartNumber>3</PartNumber><ETag>"c"</ETag><Size>5</Size></Part></ListPartsResult>`)
+		_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>false</IsTruncated><Part><PartNumber>3</PartNumber><ETag>"c"</ETag><Size>5</Size></Part></ListPartsResult>`)
 	})
 	parts, err := c.ListParts(context.Background(), "b", "k", "UP")
 	if err != nil || calls != 2 || len(parts) != 3 {
@@ -136,7 +136,7 @@ func TestCompleteMultipartUpload_BodyAndErrorInside200(t *testing.T) {
 		if r.Method != "POST" || r.URL.Query().Get("uploadId") != "UP" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
 		}
-		io.WriteString(w, respond)
+		_, _ = io.WriteString(w, respond)
 	})
 	respond = `<CompleteMultipartUploadResult><ETag>"x-2"</ETag></CompleteMultipartUploadResult>`
 	err := c.CompleteMultipartUpload(context.Background(), "b", "k", "UP", []Part{{Number: 1, ETag: `"a"`}, {Number: 2, ETag: `"b"`}})
@@ -160,7 +160,7 @@ func TestCompleteMultipartUpload_BodyAndErrorInside200(t *testing.T) {
 func TestAbort_And_Delete_TreatMissingAsSuccess(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
-		io.WriteString(w, `<Error><Code>NoSuchUpload</Code><Message>gone</Message></Error>`)
+		_, _ = io.WriteString(w, `<Error><Code>NoSuchUpload</Code><Message>gone</Message></Error>`)
 	})
 	if err := c.AbortMultipartUpload(context.Background(), "b", "k", "UP"); err != nil {
 		t.Fatalf("abort of a missing upload: %v", err)
@@ -173,7 +173,7 @@ func TestAbort_And_Delete_TreatMissingAsSuccess(t *testing.T) {
 func TestErrors_AreTyped(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
-		io.WriteString(w, `<Error><Code>SignatureDoesNotMatch</Code><Message>bad</Message></Error>`)
+		_, _ = io.WriteString(w, `<Error><Code>SignatureDoesNotMatch</Code><Message>bad</Message></Error>`)
 	})
 	_, err := c.GetRange(context.Background(), "b", "k", 0, 10) // HEAD responses carry no body, so use a GET
 	var e *Error
@@ -201,7 +201,7 @@ func TestHead_And_GetRange(t *testing.T) {
 				t.Errorf("Range header must be signed: %s", r.Header.Get("Authorization"))
 			}
 			w.WriteHeader(206)
-			io.WriteString(w, "ftypisom")
+			_, _ = io.WriteString(w, "ftypisom")
 		}
 	})
 	info, err := c.Head(context.Background(), "b", "k")
@@ -232,14 +232,14 @@ func TestListMultipartUploads_Paginates(t *testing.T) {
 			t.Errorf("unexpected query %v", q)
 		}
 		if q.Get("key-marker") == "" {
-			io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>true</IsTruncated><NextKeyMarker>p/a</NextKeyMarker><NextUploadIdMarker>U1</NextUploadIdMarker>
+			_, _ = io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>true</IsTruncated><NextKeyMarker>p/a</NextKeyMarker><NextUploadIdMarker>U1</NextUploadIdMarker>
 				<Upload><Key>p/a</Key><UploadId>U1</UploadId><Initiated>2026-11-01T10:00:00.000Z</Initiated></Upload></ListMultipartUploadsResult>`)
 			return
 		}
 		if q.Get("key-marker") != "p/a" || q.Get("upload-id-marker") != "U1" {
 			t.Errorf("markers %v", q)
 		}
-		io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated>
+		_, _ = io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated>
 			<Upload><Key>p/b</Key><UploadId>U2</UploadId><Initiated>2026-10-31T09:30:00Z</Initiated></Upload></ListMultipartUploadsResult>`)
 	})
 	ups, err := c.ListMultipartUploads(context.Background(), "b", "p/")

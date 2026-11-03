@@ -52,7 +52,7 @@ func (s *PGStore) Title(ctx context.Context, id string) (TitleInfo, error) {
 	var t TitleInfo
 	err := s.pool.QueryRow(ctx, `
 		SELECT t.id::text, t.creator_id::text, t.type::text,
-		       EXISTS (SELECT 1 FROM media_assets m WHERE m.title_id = t.id)
+		       EXISTS (SELECT 1 FROM media_assets m WHERE m.title_id = t.id AND m.status = 'ready')
 		  FROM titles t WHERE t.id = $1::uuid`, id).Scan(&t.ID, &t.CreatorID, &t.Type, &t.HasAsset)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TitleInfo{}, ErrTitleNotFound

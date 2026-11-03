@@ -67,7 +67,7 @@ func TestAgainstRealServer(t *testing.T) {
 	copy(data[4:8], "ftyp")
 	for n, chunk := range [][]byte{data[:partSize], data[partSize:]} {
 		url := c.PresignUploadPart(bucket, key, uploadID, n+1, int64(len(chunk)), 5*time.Minute)
-		req, _ := http.NewRequest(http.MethodPut, url, bytes.NewReader(chunk))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(chunk))
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -80,7 +80,7 @@ func TestAgainstRealServer(t *testing.T) {
 
 	// A pinned URL must refuse a body of a different size.
 	wrong := c.PresignUploadPart(bucket, key, uploadID, 3, 1000, 5*time.Minute)
-	req, _ := http.NewRequest(http.MethodPut, wrong, bytes.NewReader(make([]byte, 2000)))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, wrong, bytes.NewReader(make([]byte, 2000)))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

@@ -102,7 +102,7 @@ func (e *env) readyUpload(size int64) Upload {
 	return u
 }
 
-func wantProblem(t *testing.T, err error, status int, code string) *Problem {
+func problemOf(t *testing.T, err error, status int, code string) *Problem {
 	t.Helper()
 	var p *Problem
 	if !errors.As(err, &p) {
@@ -112,6 +112,12 @@ func wantProblem(t *testing.T, err error, status int, code string) *Problem {
 		t.Fatalf("want %d %s, got %d %s (%s)", status, code, p.Status, p.Code, p.Message)
 	}
 	return p
+}
+
+// wantProblem asserts the error is the given problem.
+func wantProblem(t *testing.T, err error, status int, code string) {
+	t.Helper()
+	_ = problemOf(t, err, status, code)
 }
 
 // ---------------------------------------------------------------- Create
@@ -222,7 +228,7 @@ func TestCreate_Validation(t *testing.T) {
 			in := e.req(10 * mib)
 			c.mod(&in)
 			_, err := e.svc.Create(context.Background(), e.creator, in)
-			p := wantProblem(t, err, http.StatusUnprocessableEntity, "validation_failed")
+			p := problemOf(t, err, http.StatusUnprocessableEntity, "validation_failed")
 			if p.Fields[c.field] == "" {
 				t.Fatalf("expected an error on %q, got %v", c.field, p.Fields)
 			}
@@ -455,7 +461,7 @@ func TestPartURLs(t *testing.T) {
 			}
 		}
 		_, err := e.svc.PartURLs(ctx, e.creator, u.ID, nums)
-		p := wantProblem(t, err, http.StatusUnprocessableEntity, "validation_failed")
+		p := problemOf(t, err, http.StatusUnprocessableEntity, "validation_failed")
 		if p.Fields["part_numbers"] == "" {
 			t.Errorf("%s: no field error: %+v", name, p)
 		}
@@ -579,7 +585,7 @@ func TestComplete_IncompleteThenResume(t *testing.T) {
 	e.objs.putPart(u.S3UploadID, 3, 64*mib)
 
 	_, err := e.svc.Complete(ctx, e.creator, u.ID)
-	p := wantProblem(t, err, http.StatusUnprocessableEntity, "upload_incomplete")
+	p := problemOf(t, err, http.StatusUnprocessableEntity, "upload_incomplete")
 	if !strings.Contains(p.Message, "2, 4") || !strings.Contains(p.Message, "of 4") {
 		t.Fatalf("the message must name the missing parts: %q", p.Message)
 	}
@@ -604,14 +610,14 @@ func TestComplete_WrongPartSizes(t *testing.T) {
 	e.objs.putAllParts(u)
 	e.objs.putPart(u.S3UploadID, 2, 10*mib) // too small
 	_, err := e.svc.Complete(ctx, e.creator, u.ID)
-	p := wantProblem(t, err, http.StatusUnprocessableEntity, "upload_incomplete")
+	p := problemOf(t, err, http.StatusUnprocessableEntity, "upload_incomplete")
 	if !strings.Contains(p.Message, "wrong size: 2") {
 		t.Fatalf("message %q", p.Message)
 	}
 	e.objs.putPart(u.S3UploadID, 2, 64*mib)
 	e.objs.putPart(u.S3UploadID, 4, 64*mib) // last part too big
 	_, err = e.svc.Complete(ctx, e.creator, u.ID)
-	p = wantProblem(t, err, http.StatusUnprocessableEntity, "upload_incomplete")
+	p = problemOf(t, err, http.StatusUnprocessableEntity, "upload_incomplete")
 	if !strings.Contains(p.Message, "wrong size: 4") {
 		t.Fatalf("message %q", p.Message)
 	}
@@ -622,7 +628,7 @@ func TestComplete_ExtraParts(t *testing.T) {
 	u := e.readyUpload(200 * mib)
 	e.objs.putPart(u.S3UploadID, 5, 64*mib)
 	_, err := e.svc.Complete(context.Background(), e.creator, u.ID)
-	p := wantProblem(t, err, http.StatusUnprocessableEntity, "upload_incomplete")
+	p := problemOf(t, err, http.StatusUnprocessableEntity, "upload_incomplete")
 	if !strings.Contains(p.Message, "extra parts") {
 		t.Fatalf("message %q", p.Message)
 	}
@@ -730,7 +736,7 @@ func TestComplete_Scanner(t *testing.T) {
 		e.scanner.threat = "Eicar-Test-Signature"
 		u := e.readyUpload(10 * mib)
 		_, err := e.svc.Complete(ctx, e.creator, u.ID)
-		p := wantProblem(t, err, http.StatusUnprocessableEntity, RejectMalware)
+		p := problemOf(t, err, http.StatusUnprocessableEntity, RejectMalware)
 		if strings.Contains(p.Message, "Eicar") {
 			t.Fatal("the threat name must not be shown to the creator")
 		}

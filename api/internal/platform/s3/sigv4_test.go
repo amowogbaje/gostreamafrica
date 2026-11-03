@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,7 +38,7 @@ func TestPresign_AWSDocumentationVector(t *testing.T) {
 
 func TestSignHeaders_AWSDocumentationVector(t *testing.T) {
 	// GET Object with a Range header, from the S3 SigV4 header-signing example.
-	req, _ := http.NewRequest("GET", "https://examplebucket.s3.amazonaws.com/test.txt", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), "GET", "https://examplebucket.s3.amazonaws.com/test.txt", nil)
 	req.Header.Set("Range", "bytes=0-9")
 	signHeaders(req, vecAccess, vecSecret, "us-east-1", emptySHA256, vecTime)
 	got := req.Header.Get("Authorization")
@@ -53,7 +54,7 @@ func TestSignHeaders_AWSDocumentationVector(t *testing.T) {
 func TestSignHeaders_PutWithQueryVector(t *testing.T) {
 	// "PUT Object" example: body "Welcome to Amazon S3.", x-amz-storage-class header, no query.
 	body := "Welcome to Amazon S3."
-	req, _ := http.NewRequest("PUT", "https://examplebucket.s3.amazonaws.com/test$file.text", strings.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), "PUT", "https://examplebucket.s3.amazonaws.com/test$file.text", strings.NewReader(body))
 	req.Header.Set("Date", "Fri, 24 May 2013 00:00:00 GMT")
 	req.Header.Set("X-Amz-Storage-Class", "REDUCED_REDUNDANCY")
 	signHeaders(req, vecAccess, vecSecret, "us-east-1", sha256Hex([]byte(body)), vecTime)

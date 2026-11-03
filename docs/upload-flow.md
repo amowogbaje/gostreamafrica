@@ -16,7 +16,7 @@ make upload-test ARGS="--email you@example.com --password '...' --title <title_i
 make upload-test ARGS="... --file sample.mp4 --stop-after 1"     # prints the upload id
 make upload-test ARGS="... --file sample.mp4 --resume <upload_id>"
 ```
-Use a file over 64 MiB to see several parts. The job stays `queued` until the worker exists (Prompt 2.2).
+Use a file over 64 MiB to see several parts. The worker then processes it (`make logs s=worker`); the upload moves to `ready` and `GET .../uploads/{id}` shows the job's stage and percent (docs/transcoding.md).
 
 ## Endpoints (creator or admin role; full schema in docs/openapi.yaml)
 | Call | Purpose |
@@ -41,7 +41,7 @@ the claimed container (MP4/MOV `ftyp`, MKV/WebM EBML), virus scan (`creators.Sca
 does nothing and logs a warning). A refusal ends the upload with a `reject_code`: `size_mismatch`,
 `unsupported_container`, `container_mismatch`, `malware_detected`. Scanner outages fail closed (503, retry).
 
-## Contract with the worker (Prompt 2.2)
+## Contract with the worker (implemented in Prompt 2.2: docs/transcoding.md, ADR-0016)
 The queue is the `transcode_jobs` table in Postgres. A worker claims a job with:
 ```sql
 UPDATE transcode_jobs SET state='running', locked_by=$1, locked_until=now()+interval '5 minutes',

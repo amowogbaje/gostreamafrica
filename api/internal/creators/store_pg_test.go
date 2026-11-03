@@ -115,9 +115,13 @@ func TestPG_Title(t *testing.T) {
 	if got, _ := f.store.Title(f.ctx, series); got.Type != "series" {
 		t.Fatalf("%+v", got)
 	}
-	f.exec(`INSERT INTO media_assets (title_id) VALUES ($1::uuid)`, movie)
+	f.exec(`INSERT INTO media_assets (title_id) VALUES ($1::uuid)`, movie) // status 'processing'
+	if got, _ := f.store.Title(f.ctx, movie); got.HasAsset {
+		t.Fatal("an asset that is still processing (or failed) must not block a new upload")
+	}
+	f.exec(`UPDATE media_assets SET status = 'ready', hls_manifest_key = 'x/master.m3u8', duration_seconds = 60 WHERE title_id = $1::uuid`, movie)
 	if got, _ := f.store.Title(f.ctx, movie); !got.HasAsset {
-		t.Fatal("HasAsset must be true once a media asset exists")
+		t.Fatal("HasAsset must be true once the asset is ready")
 	}
 	for _, id := range []string{"garbage", "00000000-0000-4000-8000-000000000000"} {
 		if _, err := f.store.Title(f.ctx, id); !errors.Is(err, ErrTitleNotFound) {
