@@ -29,6 +29,17 @@ type Store interface {
 	// Close moves an 'initiated' upload to aborted or expired and clears its storage upload id.
 	// ErrConflict when the upload is no longer 'initiated'.
 	Close(ctx context.Context, id string, to Status, now time.Time) error
+	// Requeue gives a dead-lettered upload (rejected with processing_failed) a fresh job and moves it back to
+	// 'uploaded'. ErrConflict when it is not in that state, ErrTitleBusy when the title has another unfinished upload.
+	Requeue(ctx context.Context, id string, now time.Time) (Job, error)
+	// Asset returns a media asset and its title, or ErrNotFound.
+	Asset(ctx context.Context, assetID string) (AssetInfo, error)
+	// ReadyUploadIDs lists the finished uploads whose output is the title's current video.
+	ReadyUploadIDs(ctx context.Context, titleID string) ([]string, error)
+	// UnpublishTitle moves a published title to 'unpublished'. Any other status is left alone.
+	UnpublishTitle(ctx context.Context, titleID string, now time.Time) error
+	// DeleteAsset removes the asset row (and its subtitles) and marks the finished uploads 'deleted', atomically.
+	DeleteAsset(ctx context.Context, assetID string, uploadIDs []string, now time.Time) error
 	// Expired lists 'initiated' uploads whose deadline has passed, oldest first.
 	Expired(ctx context.Context, now time.Time, limit int) ([]Upload, error)
 	// WithLock runs fn only if no other process holds the named lock; ran reports whether it did.

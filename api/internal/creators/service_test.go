@@ -56,7 +56,7 @@ func newEnv(t *testing.T, mods ...func(*Config)) *env {
 		titleID: titleA}
 	now := func() time.Time { return e.clock }
 	e.objs = newFakeObjects(now)
-	e.cfg = Config{RawBucket: "media-raw", MaxBytes: 8 * gib, PartBytes: 64 * mib, URLTTL: 15 * time.Minute,
+	e.cfg = Config{RawBucket: "media-raw", HLSBucket: "media-hls", PublicBucket: "media-public", MaxBytes: 8 * gib, PartBytes: 64 * mib, URLTTL: 15 * time.Minute,
 		AbandonAfter: 24 * time.Hour, MaxActive: 3, DailyBytes: 32 * gib, Policy: DefaultPolicy(4*3600, 3840, 2160)}
 	for _, m := range mods {
 		m(&e.cfg)

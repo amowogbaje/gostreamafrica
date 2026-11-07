@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,7 @@ type fakeObjects struct {
 	headSize int64                  // when > 0, Head reports this size (simulates a truncated or padded file)
 	calls    []string
 	signed   []string // "bucket/key#part:size" for every presigned URL
+	deleted  []string // every DeletePrefix call, as bucket/prefix
 }
 
 func newFakeObjects(now func() time.Time) *fakeObjects {
@@ -190,6 +192,23 @@ func (f *fakeObjects) Delete(_ context.Context, bucket, key string) error {
 	return nil
 }
 
+func (f *fakeObjects) DeletePrefix(_ context.Context, bucket, prefix string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.fail("DeletePrefix"); err != nil {
+		return 0, err
+	}
+	n := 0
+	for k := range f.objects {
+		if strings.HasPrefix(k, bucket+"/"+prefix) {
+			delete(f.objects, k)
+			n++
+		}
+	}
+	f.deleted = append(f.deleted, bucket+"/"+prefix)
+	return n, nil
+}
+
 // ---- helpers for tests (not part of ObjectStore)
 
 // putPart stores a part as a presigned PUT would.
@@ -240,17 +259,19 @@ func (f *fakeObjects) called(method string) int {
 // ---------------------------------------------------------------- in-memory Store
 
 type fakeStore struct {
-	mu       sync.Mutex
-	titles   map[string]TitleInfo
-	uploads  map[string]Upload
-	jobs     map[string]Job // upload id -> job
-	policy   map[string]Policy
-	lockHeld bool
-	jobSeq   int
+	mu          sync.Mutex
+	titles      map[string]TitleInfo
+	assets      map[string]AssetInfo
+	unpublished []string
+	uploads     map[string]Upload
+	jobs        map[string]Job // upload id -> job
+	policy      map[string]Policy
+	lockHeld    bool
+	jobSeq      int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{titles: map[string]TitleInfo{}, uploads: map[string]Upload{}, jobs: map[string]Job{}, policy: map[string]Policy{}}
+	return &fakeStore{titles: map[string]TitleInfo{}, assets: map[string]AssetInfo{}, uploads: map[string]Upload{}, jobs: map[string]Job{}, policy: map[string]Policy{}}
 }
 
 func active(s Status) bool {
@@ -377,6 +398,75 @@ func (f *fakeStore) Expired(_ context.Context, now time.Time, limit int) ([]Uplo
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (f *fakeStore) Requeue(_ context.Context, id string, now time.Time) (Job, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u := f.uploads[id]
+	if u.Status != StatusRejected || u.RejectCode != "processing_failed" {
+		return Job{}, ErrConflict
+	}
+	for _, o := range f.uploads {
+		if o.ID != id && o.TitleID == u.TitleID && active(o.Status) {
+			return Job{}, ErrTitleBusy
+		}
+	}
+	u.Status, u.RejectCode, u.RejectReason, u.UpdatedAt = StatusUploaded, "", "", now
+	f.uploads[id] = u
+	j := f.jobs[id]
+	j.State, j.Attempts, j.Error = "queued", 0, ""
+	f.jobs[id] = j
+	return j, nil
+}
+
+func (f *fakeStore) Asset(_ context.Context, id string) (AssetInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.assets[id]
+	if !ok {
+		return AssetInfo{}, ErrNotFound
+	}
+	return a, nil
+}
+
+func (f *fakeStore) ReadyUploadIDs(_ context.Context, title string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var ids []string
+	for _, u := range f.uploads {
+		if u.TitleID == title && u.Status == StatusReady {
+			ids = append(ids, u.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (f *fakeStore) UnpublishTitle(_ context.Context, title string, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, a := range f.assets {
+		if a.TitleID == title && a.TitleStatus == "published" {
+			a.TitleStatus = "unpublished"
+			f.assets[id] = a
+		}
+	}
+	f.unpublished = append(f.unpublished, title)
+	return nil
+}
+
+func (f *fakeStore) DeleteAsset(_ context.Context, assetID string, uploadIDs []string, now time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.assets, assetID)
+	for _, id := range uploadIDs {
+		if u, ok := f.uploads[id]; ok && u.Status == StatusReady {
+			u.Status, u.UpdatedAt = StatusDeleted, now
+			f.uploads[id] = u
+		}
+	}
+	return nil
 }
 
 func (f *fakeStore) WithLock(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {

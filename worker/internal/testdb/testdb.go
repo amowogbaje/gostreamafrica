@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,7 +21,7 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
+		Skipf(t, "TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
 	admin, err := pgxpool.New(ctx, url)
@@ -66,4 +67,15 @@ func Pool(t *testing.T) *pgxpool.Pool {
 		}
 	}
 	return pool
+}
+
+// Skipf skips an integration test whose service is not available, unless REQUIRE_INTEGRATION=1 (set by
+// `make test` and CI): there a missing service is a failure, so tests are never skipped silently.
+func Skipf(t *testing.T, format string, args ...any) {
+	t.Helper()
+	msg := fmt.Sprintf(format, args...)
+	if os.Getenv("REQUIRE_INTEGRATION") == "1" {
+		t.Fatalf("%s, but REQUIRE_INTEGRATION=1: integration tests may not be skipped (start the stack with `make up`)", msg)
+	}
+	t.Skip(msg)
 }

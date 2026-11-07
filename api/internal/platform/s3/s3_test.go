@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -270,5 +271,39 @@ func TestPresignUploadPart_SignsContentLengthWhenAsked(t *testing.T) {
 	}
 	if with.Query().Get("X-Amz-Signature") == without.Query().Get("X-Amz-Signature") {
 		t.Fatal("the signature must depend on the signed content length")
+	}
+}
+
+func TestList_PaginatesAndDeletePrefix(t *testing.T) {
+	var mu sync.Mutex
+	deleted := map[string]bool{}
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			q := r.URL.Query()
+			if q.Get("list-type") != "2" || q.Get("prefix") != "a/" {
+				t.Errorf("query %v", q)
+			}
+			if q.Get("continuation-token") == "" {
+				_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>T</NextContinuationToken><Contents><Key>a/1</Key></Contents><Contents><Key>a/2</Key></Contents></ListBucketResult>`)
+				return
+			}
+			_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>a/3</Key></Contents></ListBucketResult>`)
+			return
+		}
+		mu.Lock()
+		deleted[r.URL.Path] = true
+		mu.Unlock()
+		w.WriteHeader(204)
+	})
+	keys, err := c.List(context.Background(), "b", "a/")
+	if err != nil || len(keys) != 3 || keys[2] != "a/3" {
+		t.Fatalf("%v %v", keys, err)
+	}
+	n, err := c.DeletePrefix(context.Background(), "b", "a/")
+	if err != nil || n != 3 || len(deleted) != 3 || !deleted["/b/a/3"] {
+		t.Fatalf("%d %v %v", n, deleted, err)
+	}
+	if _, err := c.DeletePrefix(context.Background(), "b", ""); err == nil {
+		t.Fatal("an empty prefix would delete the whole bucket and must be refused")
 	}
 }

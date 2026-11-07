@@ -17,7 +17,7 @@ import (
 func TestAgainstRealServer(t *testing.T) {
 	endpoint := os.Getenv("TEST_S3_ENDPOINT")
 	if endpoint == "" {
-		t.Skip("TEST_S3_ENDPOINT not set")
+		skipOrFail(t, "TEST_S3_ENDPOINT not set")
 	}
 	bucket := os.Getenv("TEST_S3_BUCKET")
 	if bucket == "" {
@@ -129,10 +129,28 @@ func TestAgainstRealServer(t *testing.T) {
 		}
 	}
 
-	if err := c.Delete(ctx, bucket, key); err != nil {
-		t.Fatal(err)
+	prefix := key[:strings.LastIndex(key, "/")+1]
+	keys, err := c.List(ctx, bucket, prefix)
+	if err != nil || len(keys) != 1 || keys[0] != key {
+		t.Fatalf("List: %v %v", keys, err)
+	}
+	if n, err := c.DeletePrefix(ctx, bucket, prefix); err != nil || n != 1 {
+		t.Fatalf("DeletePrefix: %d %v", n, err)
 	}
 	if _, err := c.Head(ctx, bucket, key); !IsNotFound(err) {
 		t.Errorf("object should be gone, got %v", err)
 	}
+	if n, err := c.DeletePrefix(ctx, bucket, prefix); err != nil || n != 0 {
+		t.Errorf("deleting twice must be harmless: %d %v", n, err)
+	}
+}
+
+// skipOrFail skips an integration test whose service is not available, unless REQUIRE_INTEGRATION=1 (set by
+// `make test` and CI), when a missing service is a failure: tests must not be silently skipped there.
+func skipOrFail(t *testing.T, msg string) {
+	t.Helper()
+	if os.Getenv("REQUIRE_INTEGRATION") == "1" {
+		t.Fatalf("%s, but REQUIRE_INTEGRATION=1: integration tests may not be skipped (start the stack with `make up`)", msg)
+	}
+	t.Skip(msg)
 }

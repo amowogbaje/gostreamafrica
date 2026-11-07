@@ -24,7 +24,7 @@ func pgTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
+		skipOrFail(t, "TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
 	admin, err := pgxpool.New(ctx, url)
@@ -76,7 +76,7 @@ func redisTestClient(t *testing.T) *redis.Client {
 	t.Helper()
 	url := os.Getenv("TEST_REDIS_URL")
 	if url == "" {
-		t.Skip("TEST_REDIS_URL not set")
+		skipOrFail(t, "TEST_REDIS_URL not set")
 	}
 	opt, err := redis.ParseURL(url)
 	if err != nil {
@@ -423,4 +423,14 @@ func TestPG_TitleOwnerLookup(t *testing.T) {
 	if err := auth.AssertTitleOwner(ctx, lookup, auth.Principal{UserID: "someone-else", Role: auth.RoleCreator}, titleID); !errors.Is(err, auth.ErrForbidden) {
 		t.Errorf("other creator: %v", err)
 	}
+}
+
+// skipOrFail skips an integration test whose service is not available, unless REQUIRE_INTEGRATION=1 (set by
+// `make test` and CI), when a missing service is a failure: tests must not be silently skipped there.
+func skipOrFail(t *testing.T, msg string) {
+	t.Helper()
+	if os.Getenv("REQUIRE_INTEGRATION") == "1" {
+		t.Fatalf("%s, but REQUIRE_INTEGRATION=1: integration tests may not be skipped (start the stack with `make up`)", msg)
+	}
+	t.Skip(msg)
 }

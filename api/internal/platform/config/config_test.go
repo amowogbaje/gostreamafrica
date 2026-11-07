@@ -10,13 +10,15 @@ func env(m map[string]string) func(string) string { return func(k string) string
 
 func base() map[string]string {
 	return map[string]string{
-		"DATABASE_URL":    "postgres://u:p@postgres:5432/db?sslmode=disable",
-		"REDIS_URL":       "redis://:pw@redis:6379/0",
-		"S3_ENDPOINT":     "http://seaweedfs:8333",
-		"S3_ACCESS_KEY":   "key",
-		"S3_SECRET_KEY":   "secret",
-		"AUTH_JWT_SECRET": DevJWTSecret,
-		"SMTP_HOST":       "mailpit",
+		"DATABASE_URL":         "postgres://u:p@postgres:5432/db?sslmode=disable",
+		"REDIS_URL":            "redis://:pw@redis:6379/0",
+		"S3_ENDPOINT":          "http://seaweedfs:8333",
+		"S3_ACCESS_KEY":        "key",
+		"S3_SECRET_KEY":        "secret",
+		"PLAYBACK_SIGNING_KEY": "0123456789abcdef0123456789abcdef",
+		"PLAYBACK_BASE_URL":    "http://localhost:8088",
+		"AUTH_JWT_SECRET":      DevJWTSecret,
+		"SMTP_HOST":            "mailpit",
 	}
 }
 
@@ -224,5 +226,41 @@ func TestLoad_PublicEndpointOverride(t *testing.T) {
 	cfg, err := Load(env(m))
 	if err != nil || cfg.S3PublicEndpoint != "http://localhost:8333" || cfg.S3Endpoint != "http://seaweedfs:8333" {
 		t.Fatalf("got %+v, %v", cfg, err)
+	}
+}
+
+func TestLoad_Playback(t *testing.T) {
+	cfg, err := Load(env(base()))
+	if err != nil || cfg.PlaybackTokenTTL != 4*time.Hour || cfg.PlaybackBaseURL != "http://localhost:8088" || len(cfg.PlaybackSigningKey) != 32 {
+		t.Fatalf("%+v %v", cfg, err)
+	}
+	cases := map[string]struct {
+		set  map[string]string
+		want string
+	}{
+		"short key":      {map[string]string{"PLAYBACK_SIGNING_KEY": "tooshort"}, "PLAYBACK_SIGNING_KEY"},
+		"key with $":     {map[string]string{"PLAYBACK_SIGNING_KEY": "0123456789abcdef0123456789abcde$"}, "PLAYBACK_SIGNING_KEY"},
+		"key with space": {map[string]string{"PLAYBACK_SIGNING_KEY": "0123456789abcdef 123456789abcdef0"}, "PLAYBACK_SIGNING_KEY"},
+		"no key":         {map[string]string{"PLAYBACK_SIGNING_KEY": ""}, "PLAYBACK_SIGNING_KEY"},
+		"base with path": {map[string]string{"PLAYBACK_BASE_URL": "http://localhost:8088/x"}, "PLAYBACK_BASE_URL"},
+		"no base":        {map[string]string{"PLAYBACK_BASE_URL": ""}, "PLAYBACK_BASE_URL"},
+		"ttl too short":  {map[string]string{"PLAYBACK_TOKEN_TTL_HOURS": "1"}, "PLAYBACK_TOKEN_TTL_HOURS"},
+		"ttl too long":   {map[string]string{"PLAYBACK_TOKEN_TTL_HOURS": "7"}, "PLAYBACK_TOKEN_TTL_HOURS"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := base()
+			for k, v := range c.set {
+				m[k] = v
+			}
+			if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want an error mentioning %s, got %v", c.want, err)
+			}
+		})
+	}
+	m := base()
+	m["PLAYBACK_BASE_URL"], m["PLAYBACK_TOKEN_TTL_HOURS"] = "https://cdn.example.com/", "6"
+	if cfg, err := Load(env(m)); err != nil || cfg.PlaybackBaseURL != "https://cdn.example.com" || cfg.PlaybackTokenTTL != 6*time.Hour {
+		t.Fatalf("%+v %v", cfg, err)
 	}
 }

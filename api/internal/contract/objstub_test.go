@@ -143,3 +143,17 @@ func (o *objStub) setHead(key string, head []byte) {
 	}
 	panic("no open storage upload for " + key)
 }
+
+func (o *objStub) DeletePrefix(_ context.Context, bucket, prefix string) (int, error) {
+	if o.down {
+		return 0, errors.New("connection refused")
+	}
+	n := 0
+	for k := range o.objects {
+		if strings.HasPrefix(k, bucket+"/"+prefix) {
+			delete(o.objects, k)
+			n++
+		}
+	}
+	return n, nil
+}

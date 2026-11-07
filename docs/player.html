@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StreamAfrica HLS test player</title>
+<style>
+  body { font: 16px system-ui, sans-serif; max-width: 52rem; margin: 1.5rem auto; padding: 0 1rem; }
+  input { width: 100%; box-sizing: border-box; padding: .6rem; font: 13px ui-monospace, monospace; }
+  video { width: 100%; background: #000; margin-top: 1rem; }
+  button { padding: .6rem 1.2rem; margin: .6rem .5rem .6rem 0; }
+  pre { background: #f4f4f4; padding: .8rem; overflow: auto; min-height: 6rem; font-size: 13px; }
+  @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } input, pre { background: #222; color: #eee; } }
+</style>
+<h1>HLS test player</h1>
+<p>Paste the <code>manifest_url</code> from <code>GET /v1/playback/{id}</code> (or <code>make playback-check</code>) and press Play.
+Quality switches automatically; the log shows each switch and any error (a 410 means the URL expired: ask the API again).</p>
+<input id="url" placeholder="http://localhost:8088/hls/.../master.m3u8" autofocus>
+<button id="play">Play</button><button id="stop">Stop</button>
+<video id="v" controls playsinline></video>
+<pre id="log"></pre>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<script>
+  const $ = id => document.getElementById(id), video = $('v'), log = m => { $('log').textContent += m + '\n'; };
+  let hls;
+  function stop() { if (hls) { hls.destroy(); hls = null; } video.removeAttribute('src'); video.load(); }
+  $('stop').onclick = stop;
+  $('play').onclick = () => {
+    stop(); $('log').textContent = '';
+    const url = $('url').value.trim();
+    if (!url) return log('Paste a manifest URL first.');
+    if (window.Hls && Hls.isSupported()) {
+      hls = new Hls();
+      hls.on(Hls.Events.MANIFEST_PARSED, (_, d) => { log('Qualities: ' + d.levels.map(l => l.height + 'p').join(', ')); video.play().catch(() => {}); });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_, d) => log('Now playing ' + hls.levels[d.level].height + 'p'));
+      hls.on(Hls.Events.ERROR, (_, d) => log((d.fatal ? 'FATAL ' : 'warning ') + d.type + ': ' + d.details + (d.response ? ' (HTTP ' + d.response.code + ')' : '')));
+      hls.loadSource(url); hls.attachMedia(video);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url; video.play().catch(() => {}); log('Using the browser\'s native HLS player.');
+    } else { log('This browser cannot play HLS.'); }
+  };
+  video.addEventListener('error', () => log('Video error: ' + (video.error && video.error.message)));
+</script>

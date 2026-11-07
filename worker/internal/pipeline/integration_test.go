@@ -53,12 +53,12 @@ func newE2E(t *testing.T) *e2e {
 	t.Helper()
 	for _, b := range []string{"ffmpeg", "ffprobe"} {
 		if _, err := exec.LookPath(b); err != nil {
-			t.Skipf("%s not installed", b)
+			testdb.Skipf(t, "%s not installed", b)
 		}
 	}
 	endpoint := os.Getenv("TEST_S3_ENDPOINT")
 	if endpoint == "" {
-		t.Skip("TEST_S3_ENDPOINT not set")
+		testdb.Skipf(t, "TEST_S3_ENDPOINT not set")
 	}
 	pool := testdb.Pool(t)
 	client, err := s3.New(s3.Config{Endpoint: endpoint, AccessKey: os.Getenv("TEST_S3_ACCESS_KEY"), SecretKey: os.Getenv("TEST_S3_SECRET_KEY")})

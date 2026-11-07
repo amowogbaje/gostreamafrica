@@ -135,7 +135,7 @@ func TestSpecEndpoints(t *testing.T) {
 	if err := json.Unmarshal(j.Body.Bytes(), &doc); err != nil {
 		t.Fatalf("not JSON: %v", err)
 	}
-	if doc.OpenAPI != "3.0.3" || doc.Info.Title != "StreamAfrica API" || len(doc.Paths) != 24 || doc.Comp.Schemas["TitleDetail"] == nil {
+	if doc.OpenAPI != "3.0.3" || doc.Info.Title != "StreamAfrica API" || len(doc.Paths) != 29 || doc.Comp.Schemas["TitleDetail"] == nil {
 		t.Fatalf("converted spec looks wrong: openapi=%q title=%q paths=%d", doc.OpenAPI, doc.Info.Title, len(doc.Paths))
 	}
 	ops := 0
@@ -146,8 +146,8 @@ func TestSpecEndpoints(t *testing.T) {
 			}
 		}
 	}
-	if ops != 27 {
-		t.Fatalf("operations = %d, want 27", ops)
+	if ops != 32 {
+		t.Fatalf("operations = %d, want 32", ops)
 	}
 	// response codes must survive as strings ("200"), which Swagger UI requires
 	var raw map[string]any

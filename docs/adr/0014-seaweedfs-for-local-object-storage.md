@@ -28,8 +28,7 @@ ADR-0006 already requires plain S3 only, so the swap is configuration.
   buckets and a volume cap of 20, uploads fail with "failed to find writable volumes". `master.toml` sets `copy_1 = 1`.
 - **No lifecycle rules assumed.** The abandoned-multipart cleanup (Prompt 2.1) is an application job: list uploads, read
   `Initiated`, abort those older than 24 h. `make s3-check` proves the listing exposes `Initiated`.
-- **Open item for Prompt 2.3:** nginx proxies HLS from the private `media-hls` bucket, and nginx cannot sign S3 requests.
-  Decide then between a second unpublished S3 listener that nginx may read anonymously, or the API streaming signed redirects.
+- **Resolved in ADR-0017:** nginx reads the private `media-hls` bucket through SeaweedFS's unpublished file API, only behind a signed URL check.
 - Presigned URLs are signed for `S3_PUBLIC_ENDPOINT` (the host the browser uses), not the internal `seaweedfs:8333`.
 - If a new AWS SDK sends checksum headers an S3-compatible store rejects, set request checksums to "when required". The
   current check shows the default behaviour is accepted.

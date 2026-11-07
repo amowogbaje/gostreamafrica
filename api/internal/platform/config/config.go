@@ -60,6 +60,11 @@ type Config struct {
 	S3BucketHLS      string
 	S3BucketPublic   string
 
+	// --- playback (Phase 2.3)
+	PlaybackSigningKey string        // secret: signs short-lived media URLs; nginx holds the same key
+	PlaybackBaseURL    string        // where browsers reach the media front door (nginx locally, the CDN in the cloud)
+	PlaybackTokenTTL   time.Duration // how long a signed manifest URL stays valid
+
 	// --- creator uploads (Phase 2)
 	UploadMaxBytes        int64         // largest accepted source file
 	UploadPartBytes       int64         // multipart part size handed to clients
@@ -206,6 +211,17 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.S3BucketRaw = get("S3_BUCKET_RAW", "media-raw")
 	cfg.S3BucketHLS = get("S3_BUCKET_HLS", "media-hls")
 	cfg.S3BucketPublic = get("S3_BUCKET_PUBLIC", "media-public")
+
+	// --- playback
+	cfg.PlaybackSigningKey = strings.TrimSpace(getenv("PLAYBACK_SIGNING_KEY"))
+	if len(cfg.PlaybackSigningKey) < 32 || strings.ContainsAny(cfg.PlaybackSigningKey, " \t\r\n\"'$") {
+		errs = append(errs, errors.New("PLAYBACK_SIGNING_KEY is required: at least 32 characters, no spaces, quotes or $"))
+	}
+	cfg.PlaybackBaseURL = strings.TrimRight(strings.TrimSpace(getenv("PLAYBACK_BASE_URL")), "/")
+	if u, err := url.Parse(cfg.PlaybackBaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "" {
+		errs = append(errs, errors.New("PLAYBACK_BASE_URL is required: an http(s) URL without a path, for example http://localhost:8088"))
+	}
+	cfg.PlaybackTokenTTL = time.Duration(intIn("PLAYBACK_TOKEN_TTL_HOURS", "4", 2, 6)) * time.Hour
 
 	// --- creator uploads
 	const mib = 1 << 20

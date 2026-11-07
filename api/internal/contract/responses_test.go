@@ -39,6 +39,7 @@ type call struct {
 	headers            map[string]string
 	badRequest         bool // the request deliberately violates the spec, so only the response is validated
 	wantStatus         int
+	skipBody           bool // validate status and headers only (the body is a text/event-stream)
 }
 
 func randHex(n int) string {
@@ -100,7 +101,7 @@ func (s *stack) do(c call) *httptest.ResponseRecorder {
 
 	out := &openapi3filter.ResponseValidationInput{
 		RequestValidationInput: in, Status: rec.Code, Header: rec.Header(),
-		Options: &openapi3filter.Options{IncludeResponseStatus: true},
+		Options: &openapi3filter.Options{IncludeResponseStatus: true, ExcludeResponseBody: c.skipBody},
 	}
 	out.SetBodyBytes(rec.Body.Bytes())
 	if err := openapi3filter.ValidateResponse(context.Background(), out); err != nil {
@@ -560,6 +561,76 @@ func TestResponsesMatchSpec(t *testing.T) {
 	if limited == 0 {
 		t.Fatal("creating uploads was never rate limited")
 	}
+
+	// ---- playback, retry, live progress, unpublish, delete
+	s.do(call{method: "GET", path: "/v1/playback/" + movie, wantStatus: 401})
+	rec = s.do(call{method: "GET", path: "/v1/playback/" + movie, bearer: ada.AccessToken, wantStatus: 200})
+	if !strings.Contains(rec.Body.String(), "/hls/") || !strings.Contains(rec.Body.String(), "master.m3u8") || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("playback must return a signed manifest URL and never be cached: %s", rec.Body.String())
+	}
+	s.do(call{method: "GET", path: "/v1/playback/" + draft, bearer: ada.AccessToken, wantStatus: 404}) // not published: invisible
+	s.do(call{method: "GET", path: "/v1/playback/00000000-0000-4000-8000-000000000000", bearer: ada.AccessToken, wantStatus: 404})
+	s.do(call{method: "GET", path: "/v1/playback/garbage", bearer: ada.AccessToken, badRequest: true, wantStatus: 404})
+
+	s.do(call{method: "GET", path: "/v1/creator/uploads/" + bad.Upload.ID + "/events", wantStatus: 401})
+	s.do(call{method: "GET", path: "/v1/creator/uploads/" + bad.Upload.ID + "/events", bearer: ada.AccessToken, wantStatus: 403})
+	s.do(call{method: "GET", path: "/v1/creator/uploads/00000000-0000-4000-8000-000000000000/events", bearer: creator.AccessToken, wantStatus: 404})
+	rec = s.do(call{method: "GET", path: "/v1/creator/uploads/" + bad.Upload.ID + "/events", bearer: creator.AccessToken, wantStatus: 200, skipBody: true})
+	if !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/event-stream") || !strings.Contains(rec.Body.String(), "event: status") ||
+		!strings.Contains(rec.Body.String(), "event: end") || !strings.Contains(rec.Body.String(), "unsupported_container") {
+		t.Fatalf("a finished upload streams its state and then ends: %q", rec.Body.String())
+	}
+
+	retryTitle := mk("retry-film", "movie", "en", "draft", 0)
+	rec = s.do(call{method: "POST", path: "/v1/creator/uploads", body: create(retryTitle, 10*mib), bearer: creator.AccessToken, wantStatus: 201})
+	dead := jsonOf[createdResp](t, rec)
+	s.objs.store(dead.Upload.ID+"/source.mp4", 10*mib)
+	s.do(call{method: "POST", path: "/v1/creator/uploads/" + dead.Upload.ID + "/complete", bearer: creator.AccessToken, wantStatus: 202})
+	s.exec(`UPDATE uploads SET status = 'rejected', reject_code = 'processing_failed', reject_reason = 'sorry' WHERE id = $1::uuid`, dead.Upload.ID)
+	s.exec(`UPDATE transcode_jobs SET state = 'failed', attempts = 3, finished_at = now(), last_error = 'ffmpeg exploded at 10.0.0.5' WHERE upload_id = $1::uuid`, dead.Upload.ID)
+	s.do(call{method: "POST", path: "/v1/creator/uploads/" + dead.Upload.ID + "/retry", wantStatus: 401})
+	s.do(call{method: "POST", path: "/v1/creator/uploads/" + dead.Upload.ID + "/retry", bearer: ada.AccessToken, wantStatus: 403})
+	s.do(call{method: "POST", path: "/v1/creator/uploads/00000000-0000-4000-8000-000000000000/retry", bearer: creator.AccessToken, wantStatus: 404})
+	s.do(call{method: "POST", path: "/v1/creator/uploads/" + bad.Upload.ID + "/retry", bearer: creator.AccessToken, wantStatus: 409}) // a refused file
+	rec = s.do(call{method: "POST", path: "/v1/creator/uploads/" + dead.Upload.ID + "/retry", bearer: creator.AccessToken, wantStatus: 202})
+	if !strings.Contains(rec.Body.String(), `"status":"uploaded"`) || strings.Contains(rec.Body.String(), "10.0.0.5") {
+		t.Fatalf("%s", rec.Body.String())
+	}
+	s.exec(`UPDATE transcode_jobs SET attempts = 1, last_error = 'ffmpeg exploded at 10.0.0.5' WHERE upload_id = $1::uuid`, dead.Upload.ID)
+	rec = s.do(call{method: "GET", path: "/v1/creator/uploads/" + dead.Upload.ID, bearer: creator.AccessToken, wantStatus: 200})
+	if strings.Contains(rec.Body.String(), "10.0.0.5") || !strings.Contains(rec.Body.String(), "retried automatically") {
+		t.Fatalf("a creator sees a friendly note, never the internal error: %s", rec.Body.String())
+	}
+
+	assetOf := func(title string) string {
+		return s.scan(`SELECT id::text FROM media_assets WHERE title_id = $1::uuid`, title)
+	}
+	moviesAsset := assetOf(movie)
+	s.do(call{method: "POST", path: "/v1/creator/assets/" + moviesAsset + "/unpublish", wantStatus: 401})
+	s.do(call{method: "POST", path: "/v1/creator/assets/" + moviesAsset + "/unpublish", bearer: ada.AccessToken, wantStatus: 403})
+	s.do(call{method: "POST", path: "/v1/creator/assets/" + moviesAsset + "/unpublish", bearer: other.AccessToken, wantStatus: 404})
+	s.do(call{method: "POST", path: "/v1/creator/assets/00000000-0000-4000-8000-000000000000/unpublish", bearer: creator.AccessToken, wantStatus: 404})
+	rec = s.do(call{method: "POST", path: "/v1/creator/assets/" + moviesAsset + "/unpublish", bearer: creator.AccessToken, wantStatus: 200})
+	if !strings.Contains(rec.Body.String(), `"title_status":"unpublished"`) {
+		t.Fatalf("%s", rec.Body.String())
+	}
+	s.do(call{method: "GET", path: "/v1/playback/" + movie, bearer: ada.AccessToken, wantStatus: 404})     // viewers lose access at once
+	s.do(call{method: "GET", path: "/v1/playback/" + movie, bearer: creator.AccessToken, wantStatus: 200}) // the owner may still preview
+
+	delTitle := mk("delete-film", "movie", "en", "published", 1)
+	s.exec(`INSERT INTO media_assets (title_id, status, hls_manifest_key, duration_seconds) VALUES ($1::uuid, 'ready', 'k', 60)`, delTitle)
+	delAsset := assetOf(delTitle)
+	busyTitle := mk("busy-film", "movie", "en", "draft", 0)
+	s.exec(`INSERT INTO media_assets (title_id, status) VALUES ($1::uuid, 'processing')`, busyTitle)
+	s.do(call{method: "DELETE", path: "/v1/creator/assets/" + delAsset, wantStatus: 401})
+	s.do(call{method: "DELETE", path: "/v1/creator/assets/" + delAsset, bearer: ada.AccessToken, wantStatus: 403})
+	s.do(call{method: "DELETE", path: "/v1/creator/assets/" + delAsset, bearer: other.AccessToken, wantStatus: 404})
+	s.do(call{method: "DELETE", path: "/v1/creator/assets/" + assetOf(busyTitle), bearer: creator.AccessToken, wantStatus: 409})
+	s.do(call{method: "DELETE", path: "/v1/creator/assets/" + delAsset, bearer: creator.AccessToken, wantStatus: 204})
+	s.do(call{method: "DELETE", path: "/v1/creator/assets/" + delAsset, bearer: creator.AccessToken, wantStatus: 404})
+	s.objs.down = true
+	s.do(call{method: "DELETE", path: "/v1/creator/assets/" + moviesAsset, bearer: creator.AccessToken, wantStatus: 502})
+	s.objs.down = false
 
 	// ---- every operation in the spec must have been exercised at least once
 	for op := range specOperations(doc) {

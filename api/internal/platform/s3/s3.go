@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -358,4 +359,71 @@ func (c *Client) Delete(ctx context.Context, bucket, key string) error {
 		return err
 	}
 	return nil
+}
+
+// List returns every object key under prefix.
+func (c *Client) List(ctx context.Context, bucket, prefix string) ([]string, error) {
+	var keys []string
+	token := ""
+	for {
+		q := url.Values{"list-type": {"2"}, "max-keys": {"1000"}}
+		if prefix != "" {
+			q.Set("prefix", prefix)
+		}
+		if token != "" {
+			q.Set("continuation-token", token)
+		}
+		body, _, err := c.do(ctx, http.MethodGet, objectPath(bucket, ""), q, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		var out struct {
+			Truncated bool     `xml:"IsTruncated"`
+			Next      string   `xml:"NextContinuationToken"`
+			Keys      []string `xml:"Contents>Key"`
+		}
+		if err := xml.Unmarshal(body, &out); err != nil {
+			return nil, fmt.Errorf("s3: bad list response: %w", err)
+		}
+		keys = append(keys, out.Keys...)
+		if !out.Truncated || out.Next == "" {
+			return keys, nil
+		}
+		token = out.Next
+	}
+}
+
+// DeletePrefix removes every object under prefix, a few at a time, and returns how many it found.
+// Deleting nothing is not an error, so it is safe to repeat.
+func (c *Client) DeletePrefix(ctx context.Context, bucket, prefix string) (int, error) {
+	if prefix == "" {
+		return 0, errors.New("s3: refusing to delete an entire bucket (empty prefix)")
+	}
+	keys, err := c.List(ctx, bucket, prefix)
+	if err != nil {
+		return 0, err
+	}
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		first error
+		sem   = make(chan struct{}, 8)
+	)
+	for _, k := range keys {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(k string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := c.Delete(ctx, bucket, k); err != nil {
+				mu.Lock()
+				if first == nil {
+					first = err
+				}
+				mu.Unlock()
+			}
+		}(k)
+	}
+	wg.Wait()
+	return len(keys), first
 }

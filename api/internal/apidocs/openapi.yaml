@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: StreamAfrica API
-  version: 0.4.0
+  version: 0.5.0
   description: 'StreamAfrica HTTP API.
 
 
@@ -34,6 +34,7 @@ tags:
 - name: catalog
 - name: library
 - name: creator
+- name: playback
 paths:
   /healthz:
     get:
@@ -1006,6 +1007,216 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '503': *id005
+  /v1/playback/{playableId}:
+    parameters:
+    - name: playableId
+      in: path
+      required: true
+      description: A movie's title id, or an episode id.
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - playback
+      summary: Signed, expiring URLs to play a video
+      description: 'Checks that you may watch it and returns the HLS manifest URL plus signed subtitle URLs. The token is in the
+        URL path, so every playlist and segment the player fetches from it is covered, and nothing else is: when it expires
+        (see `expires_at`) the media server answers 410 and the player asks this endpoint again. Poster and thumbnail URLs are
+        public and are only a hint: a video may have none. Owners and admins can preview their own unpublished videos.
+        Never cache or share the response.'
+      operationId: getPlayback
+      security: *id009
+      responses:
+        '200':
+          description: playback details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playback'
+        '401': *id010
+        '403':
+          description: Your account may not watch this video (not_entitled)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such video, it is not published, or it is not ready (not_playable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429': *id004
+  /v1/creator/uploads/{id}/retry:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - creator
+      summary: Retry an upload whose processing failed for good (no need to upload again)
+      description: 'Only for an upload that ended `rejected` with `reject_code` `processing_failed`. A file that was refused as
+        unacceptable cannot be retried; upload a different file. Calling it while the upload is already queued or processing
+        is harmless.'
+      operationId: retryUpload
+      security: *id009
+      responses:
+        '202':
+          description: queued again
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Upload'
+        '401': *id010
+        '403':
+          description: Not a creator or admin (forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such upload, or it is not yours (upload_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Not retryable (not_retryable), the original file is gone (source_missing), or the title has another unfinished upload (upload_in_progress)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429': *id004
+        '502':
+          description: Object storage is unavailable (storage_unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/creator/uploads/{id}/events:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - creator
+      summary: Live progress of an upload as Server-Sent Events
+      description: 'Streams `status` events (the same JSON as **GET /v1/creator/uploads/{id}**, without `stored_parts`) whenever the
+        state, stage or percentage changes, then an `end` event when the upload reaches a final state. A comment line is sent every
+        15 seconds to keep the connection open, and a stream lasts at most 30 minutes (reconnect). Use `EventSource`, or poll the GET endpoint.'
+      operationId: streamUploadEvents
+      security: *id009
+      responses:
+        '200':
+          description: an event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401': *id010
+        '403':
+          description: Not a creator or admin (forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such upload, or it is not yours (upload_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429': *id004
+  /v1/creator/assets/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: The media asset id (`asset_id` in the playback response).
+      schema:
+        type: string
+        format: uuid
+    delete:
+      tags:
+      - creator
+      summary: Delete a video for good (unpublishes the title and removes the files)
+      description: 'Unpublishes the title, then deletes the HLS output, the poster and thumbnails and the original upload from storage,
+        then the database records. Safe to repeat after a failure. The title can then receive a new upload.'
+      operationId: deleteAsset
+      security: *id009
+      responses:
+        '204':
+          description: deleted
+        '401': *id010
+        '403':
+          description: Not a creator or admin (forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such video, or it is not yours (asset_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The video is still being processed (asset_busy)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429': *id004
+        '502':
+          description: Object storage is unavailable (storage_unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/creator/assets/{id}/unpublish:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - creator
+      summary: Hide a video's title from viewers (the files stay; safe to repeat)
+      operationId: unpublishAsset
+      security: *id009
+      responses:
+        '200':
+          description: the title is no longer published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetState'
+        '401': *id010
+        '403':
+          description: Not a creator or admin (forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such video, or it is not yours (asset_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429': *id004
 components:
   securitySchemes:
     bearerAuth:
@@ -1840,6 +2051,7 @@ components:
           maximum: 100
         error:
           type: string
+          description: A friendly note, only while an attempt is being retried. Internal errors are never shown.
       required:
       - id
       - state
@@ -1883,6 +2095,7 @@ components:
           - rejected
           - aborted
           - expired
+          - deleted
         part_size_bytes:
           type: integer
           format: int64
@@ -1983,3 +2196,75 @@ components:
       required:
       - parts
       - urls_expire_at
+    Playback:
+      type: object
+      additionalProperties: false
+      properties:
+        playable_id:
+          type: string
+          format: uuid
+        asset_id:
+          type: string
+          format: uuid
+        manifest_url:
+          type: string
+          format: uri
+          description: Signed HLS master playlist URL. Give it to the player; everything it references is covered by the same token.
+        expires_at:
+          type: string
+          format: date-time
+          description: When the signed URLs stop working. Ask again before then (the player gets 410 afterwards).
+        duration_seconds:
+          type: integer
+        subtitles:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaybackSubtitle'
+        poster_url:
+          type: string
+          format: uri
+          description: 'Public image. Only a hint, because a video can have none, and the URL then answers 404.'
+        thumbnails_url:
+          type: string
+          format: uri
+          description: Public WebVTT index of the seek-preview sprite. Only a hint, like poster_url.
+      required:
+      - playable_id
+      - asset_id
+      - manifest_url
+      - expires_at
+      - duration_seconds
+      - subtitles
+      - poster_url
+      - thumbnails_url
+    PlaybackSubtitle:
+      type: object
+      additionalProperties: false
+      properties:
+        language:
+          type: string
+        label:
+          type: string
+        url:
+          type: string
+          format: uri
+      required:
+      - language
+      - label
+      - url
+    AssetState:
+      type: object
+      additionalProperties: false
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        title_id:
+          type: string
+          format: uuid
+        title_status:
+          type: string
+      required:
+      - asset_id
+      - title_id
+      - title_status

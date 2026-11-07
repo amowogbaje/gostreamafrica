@@ -26,12 +26,16 @@ Use a file over 64 MiB to see several parts. The worker then processes it (`make
 | `GET  /v1/creator/uploads/{id}` | state; while unfinished also `stored_parts`, which is how a client resumes |
 | `POST /v1/creator/uploads/{id}/complete` | check, assemble, queue the job (202; safe to repeat) |
 | `DELETE /v1/creator/uploads/{id}` | cancel an unfinished upload |
+| `GET  /v1/creator/uploads/{id}/events` | live progress as Server-Sent Events (`status` events, then `end`); polling the GET above works too |
+| `POST /v1/creator/uploads/{id}/retry` | give a dead-lettered upload (`processing_failed`) one more go, without uploading again |
+| `POST /v1/creator/assets/{assetId}/unpublish` | hide the video's title from viewers; the files stay |
+| `DELETE /v1/creator/assets/{assetId}` | delete the video for good: unpublish, remove HLS output, poster, thumbnails and the original, then the records |
 
 Every part is `part_size_bytes` except the last (the remainder). The PUT body must be exactly the `size_bytes`
 given for that part: the length is part of the signature, so storage refuses anything else.
 
 ## Life of an upload
-`initiated` -> `uploaded` (job queued) -> `processing` -> `ready`, or `rejected` / `aborted` / `expired`.
+`initiated` -> `uploaded` (job queued) -> `processing` -> `ready`, or `rejected` / `aborted` / `expired`; a finished video that its creator deletes becomes `deleted`.
 One unfinished upload per title. Limits (env, see .env.example): 8 GiB per file, 3 unfinished uploads and 32 GiB per
 24 h per creator, 10 starts per hour. An upload not completed within 24 h is aborted by a sweep job (hourly, one API
 replica at a time via a Postgres advisory lock); it also aborts storage uploads that have no database row.

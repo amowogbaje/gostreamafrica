@@ -16,6 +16,7 @@ const (
 	StatusRejected   Status = "rejected"   // the file is not acceptable
 	StatusAborted    Status = "aborted"    // the creator cancelled
 	StatusExpired    Status = "expired"    // never finished in time
+	StatusDeleted    Status = "deleted"    // the creator deleted the finished video
 )
 
 // Rejection codes. Clients may branch on these; the wording of the reason may change.
@@ -68,6 +69,15 @@ func (u Upload) PartSize(n int) int64 {
 		return u.PartSizeBytes
 	}
 	return u.SizeBytes - int64(u.PartCount-1)*u.PartSizeBytes
+}
+
+// AssetInfo is a media asset with the title it belongs to.
+type AssetInfo struct {
+	ID          string
+	TitleID     string
+	CreatorID   string
+	Status      string // processing, ready, failed
+	TitleStatus string
 }
 
 // Job is the transcode job queued for an upload.

@@ -21,3 +21,4 @@ ADRs 0001-0003 were written in Phase 0 Step 1, so later numbering starts at 0004
 | 0014 | SeaweedFS replaces MinIO for local object storage | Accepted |
 | 0015 | A small standard-library S3 client instead of an SDK | Accepted |
 | 0016 | The transcode queue is the transcode_jobs table in PostgreSQL | Accepted |
+| 0017 | Signed media URLs with the token in the path, checked by nginx secure_link | Accepted |

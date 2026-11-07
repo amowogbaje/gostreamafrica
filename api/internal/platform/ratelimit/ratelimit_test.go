@@ -143,7 +143,7 @@ func TestClientIP(t *testing.T) {
 func TestRedisStore_Integration(t *testing.T) {
 	url := os.Getenv("TEST_REDIS_URL")
 	if url == "" {
-		t.Skip("TEST_REDIS_URL not set")
+		skipOrFail(t, "TEST_REDIS_URL not set")
 	}
 	opt, err := redis.ParseURL(url)
 	if err != nil {
@@ -167,4 +167,14 @@ func TestRedisStore_Integration(t *testing.T) {
 	if n3, _, _ := store.Hit(ctx, key, time.Second); n3 != 1 {
 		t.Fatalf("after window n=%d", n3)
 	}
+}
+
+// skipOrFail skips an integration test whose service is not available, unless REQUIRE_INTEGRATION=1 (set by
+// `make test` and CI), when a missing service is a failure: tests must not be silently skipped there.
+func skipOrFail(t *testing.T, msg string) {
+	t.Helper()
+	if os.Getenv("REQUIRE_INTEGRATION") == "1" {
+		t.Fatalf("%s, but REQUIRE_INTEGRATION=1: integration tests may not be skipped (start the stack with `make up`)", msg)
+	}
+	t.Skip(msg)
 }

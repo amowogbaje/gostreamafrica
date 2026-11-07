@@ -425,3 +425,126 @@ func TestPG_DeletingATitleRemovesItsUploadsAndJobs(t *testing.T) {
 		t.Fatalf("deleting a user that still has upload %s must be refused", u2.ID)
 	}
 }
+
+func TestPG_Requeue(t *testing.T) {
+	f := newPG(t)
+	title := f.title("movie", f.creator)
+	u := f.upload(title, f.creator, nil)
+	job, err := f.store.MarkUploaded(f.ctx, u.ID, DefaultPolicy(60, 1, 1), f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// not dead-lettered yet
+	if _, err := f.store.Requeue(f.ctx, u.ID, f.now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a live upload is not requeueable: %v", err)
+	}
+	// the worker gives up: job failed, upload rejected with processing_failed
+	f.exec(`UPDATE transcode_jobs SET state = 'failed', attempts = 3, finished_at = now(), last_error = 'boom' WHERE id = $1::uuid`, job.ID)
+	f.exec(`UPDATE uploads SET status = 'rejected', reject_code = 'processing_failed', reject_reason = 'sorry' WHERE id = $1::uuid`, u.ID)
+
+	// another unfinished upload on the title blocks the retry
+	other := Upload{ID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", CreatorID: f.creator, TitleID: title, Filename: "x.mp4", ContentType: "video/mp4",
+		Container: "mp4", SizeBytes: 1, PartSizeBytes: 1, PartCount: 1, Bucket: "b", ObjectKey: "k", Status: StatusInitiated,
+		ExpiresAt: f.now.Add(time.Hour), CreatedAt: f.now, UpdatedAt: f.now}
+	if err := f.store.Create(f.ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Requeue(f.ctx, u.ID, f.now); !errors.Is(err, ErrTitleBusy) {
+		t.Fatalf("%v", err)
+	}
+	if got, _ := f.store.Get(f.ctx, u.ID); got.Status != StatusRejected {
+		t.Fatalf("a refused requeue changes nothing: %s", got.Status)
+	}
+	f.exec(`DELETE FROM uploads WHERE id = $1::uuid`, other.ID)
+
+	later := f.now.Add(time.Minute)
+	j, err := f.store.Requeue(f.ctx, u.ID, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.ID != job.ID || j.State != "queued" || j.Attempts != 0 {
+		t.Fatalf("the same job starts over: %+v", j)
+	}
+	got, _ := f.store.Get(f.ctx, u.ID)
+	if got.Status != StatusUploaded || got.RejectCode != "" || got.RejectReason != "" {
+		t.Fatalf("%+v", got)
+	}
+	v := f.pool.QueryRow(f.ctx, `SELECT finished_at IS NULL AND last_error IS NULL AND locked_by IS NULL AND run_after = $2 FROM transcode_jobs WHERE id = $1::uuid`, job.ID, later)
+	var clean bool
+	if err := v.Scan(&clean); err != nil || !clean {
+		t.Fatalf("the job is reset (%v %v)", clean, err)
+	}
+	if _, err := f.store.Requeue(f.ctx, u.ID, later); !errors.Is(err, ErrConflict) {
+		t.Fatalf("requeueing twice: %v", err)
+	}
+
+	// a refused file (any other code) can never be requeued
+	r := f.upload(f.title("movie", f.creator), f.creator, nil)
+	if err := f.store.Reject(f.ctx, r.ID, "unsupported_codec", "no", f.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Requeue(f.ctx, r.ID, f.now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestPG_AssetsUnpublishAndDelete(t *testing.T) {
+	f := newPG(t)
+	title := f.title("movie", f.creator)
+	f.exec(`UPDATE titles SET status = 'published', published_at = now() WHERE id = $1::uuid`, title)
+	up := f.upload(title, f.creator, nil)
+	if _, err := f.store.MarkUploaded(f.ctx, up.ID, DefaultPolicy(60, 1, 1), f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE uploads SET status = 'ready' WHERE id = $1::uuid`, up.ID)
+	var asset string
+	if err := f.pool.QueryRow(f.ctx, `INSERT INTO media_assets (title_id, status, hls_manifest_key, duration_seconds) VALUES ($1::uuid, 'ready', 'x', 10) RETURNING id::text`, title).Scan(&asset); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`INSERT INTO subtitles (asset_id, language, label, vtt_url) VALUES ($1::uuid, 'en', 'EN', 'x')`, asset)
+
+	a, err := f.store.Asset(f.ctx, asset)
+	if err != nil || a.ID != asset || a.TitleID != title || a.CreatorID != f.creator || a.Status != "ready" || a.TitleStatus != "published" {
+		t.Fatalf("%+v %v", a, err)
+	}
+	for _, id := range []string{"nope", "00000000-0000-4000-8000-000000000000"} {
+		if _, err := f.store.Asset(f.ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Asset(%q) = %v", id, err)
+		}
+	}
+	if ids, err := f.store.ReadyUploadIDs(f.ctx, title); err != nil || len(ids) != 1 || ids[0] != up.ID {
+		t.Fatalf("%v %v", ids, err)
+	}
+
+	if err := f.store.UnpublishTitle(f.ctx, title, f.now); err != nil {
+		t.Fatal(err)
+	}
+	var st string
+	_ = f.pool.QueryRow(f.ctx, `SELECT status::text FROM titles WHERE id = $1::uuid`, title).Scan(&st)
+	if st != "unpublished" {
+		t.Fatalf("%s", st)
+	}
+	draft := f.title("movie", f.creator)
+	if err := f.store.UnpublishTitle(f.ctx, draft, f.now); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.pool.QueryRow(f.ctx, `SELECT status::text FROM titles WHERE id = $1::uuid`, draft).Scan(&st)
+	if st != "draft" {
+		t.Fatalf("only published titles change: %s", st)
+	}
+
+	if err := f.store.DeleteAsset(f.ctx, asset, []string{up.ID}, f.now); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	_ = f.pool.QueryRow(f.ctx, `SELECT (SELECT count(*) FROM media_assets WHERE id = $1::uuid) + (SELECT count(*) FROM subtitles WHERE asset_id = $1::uuid)`, asset).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d rows remain", n)
+	}
+	if got, _ := f.store.Get(f.ctx, up.ID); got.Status != StatusDeleted {
+		t.Fatalf("the upload is kept, marked deleted: %s", got.Status)
+	}
+	if err := f.store.DeleteAsset(f.ctx, asset, []string{up.ID}, f.now); err != nil {
+		t.Fatalf("deleting again is harmless: %v", err)
+	}
+}

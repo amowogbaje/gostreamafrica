@@ -220,3 +220,95 @@ func (s *PGStore) WithLock(ctx context.Context, key int64, fn func(context.Conte
 	}()
 	return true, fn(ctx)
 }
+
+// Requeue implements Store.
+func (s *PGStore) Requeue(ctx context.Context, id string, now time.Time) (Job, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `UPDATE uploads SET status = 'uploaded', reject_code = NULL, reject_reason = NULL, updated_at = $2
+		WHERE id = $1::uuid AND status = 'rejected' AND reject_code = 'processing_failed'`, id, now)
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "23505" && pg.ConstraintName == "uploads_one_active_per_title" {
+		return Job{}, ErrTitleBusy
+	}
+	if err != nil {
+		return Job{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return Job{}, ErrConflict
+	}
+	job, err := scanJob(tx.QueryRow(ctx, `UPDATE transcode_jobs SET state = 'queued', attempts = 0, run_after = $2, finished_at = NULL,
+		last_error = NULL, stage = NULL, percent = NULL, locked_by = NULL, locked_until = NULL, updated_at = $2
+		WHERE id = (SELECT id FROM transcode_jobs WHERE upload_id = $1::uuid AND state = 'failed' ORDER BY created_at DESC LIMIT 1)
+		RETURNING `+jobCols, id, now))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Job{}, ErrConflict
+	}
+	if err != nil {
+		return Job{}, err
+	}
+	return job, tx.Commit(ctx)
+}
+
+// Asset implements Store.
+func (s *PGStore) Asset(ctx context.Context, assetID string) (AssetInfo, error) {
+	if !uuidRE.MatchString(assetID) {
+		return AssetInfo{}, ErrNotFound
+	}
+	var a AssetInfo
+	err := s.pool.QueryRow(ctx, `
+		SELECT a.id::text, t.id::text, t.creator_id::text, a.status::text, t.status::text
+		  FROM media_assets a
+		  LEFT JOIN episodes e ON e.id = a.episode_id
+		  JOIN titles t ON t.id = COALESCE(a.title_id, e.title_id)
+		 WHERE a.id = $1::uuid`, assetID).Scan(&a.ID, &a.TitleID, &a.CreatorID, &a.Status, &a.TitleStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AssetInfo{}, ErrNotFound
+	}
+	return a, err
+}
+
+// ReadyUploadIDs implements Store.
+func (s *PGStore) ReadyUploadIDs(ctx context.Context, titleID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id::text FROM uploads WHERE title_id = $1::uuid AND status = 'ready' ORDER BY created_at`, titleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// UnpublishTitle implements Store.
+func (s *PGStore) UnpublishTitle(ctx context.Context, titleID string, now time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE titles SET status = 'unpublished', updated_at = $2 WHERE id = $1::uuid AND status = 'published'`, titleID, now)
+	return err
+}
+
+// DeleteAsset implements Store.
+func (s *PGStore) DeleteAsset(ctx context.Context, assetID string, uploadIDs []string, now time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `DELETE FROM media_assets WHERE id = $1::uuid`, assetID); err != nil {
+		return err
+	}
+	if len(uploadIDs) > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE uploads SET status = 'deleted', updated_at = $2 WHERE id = ANY($1::uuid[]) AND status = 'ready'`, uploadIDs, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}

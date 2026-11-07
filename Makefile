@@ -35,7 +35,7 @@ migrate-up: .env ## Apply all pending migrations
 migrate-down: .env ## Roll back ONE migration
 	$(COMPOSE) --profile tools run --rm migrate down 1
 
-test: .env ## Run Go tests (api, worker) and web typecheck
+test: .env ## Run ALL tests against the running stack (needs `make up`; a missing service fails, never skips)
 	$(COMPOSE) run --rm --no-deps api sh -c "go mod tidy && go test -count=1 ./..."
 	$(COMPOSE) run --rm --no-deps worker go test -count=1 ./...
 	$(WEB_RUN) "npm install --no-audit --no-fund && npm run typecheck && npm test"

@@ -23,7 +23,7 @@ func TestNew_InvalidURLDoesNotLeak(t *testing.T) {
 func TestCheck_Integration(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
+		skipOrFail(t, "TEST_DATABASE_URL not set")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -35,4 +35,14 @@ func TestCheck_Integration(t *testing.T) {
 	if err := database.Check(pool)(ctx); err != nil {
 		t.Fatalf("check failed: %v", err)
 	}
+}
+
+// skipOrFail skips an integration test whose service is not available, unless REQUIRE_INTEGRATION=1 (set by
+// `make test` and CI), when a missing service is a failure: tests must not be silently skipped there.
+func skipOrFail(t *testing.T, msg string) {
+	t.Helper()
+	if os.Getenv("REQUIRE_INTEGRATION") == "1" {
+		t.Fatalf("%s, but REQUIRE_INTEGRATION=1: integration tests may not be skipped (start the stack with `make up`)", msg)
+	}
+	t.Skip(msg)
 }

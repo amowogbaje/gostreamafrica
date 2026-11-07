@@ -29,11 +29,14 @@ type ObjectStore interface {
 	Head(ctx context.Context, bucket, key string) (s3.ObjectInfo, error)
 	GetRange(ctx context.Context, bucket, key string, offset, length int64) ([]byte, error)
 	Delete(ctx context.Context, bucket, key string) error
+	DeletePrefix(ctx context.Context, bucket, prefix string) (int, error)
 }
 
 // Config holds the upload limits and storage names.
 type Config struct {
 	RawBucket    string
+	HLSBucket    string        // published video (private)
+	PublicBucket string        // posters and thumbnails
 	MaxBytes     int64         // largest accepted file
 	PartBytes    int64         // part size handed to clients
 	URLTTL       time.Duration // lifetime of one presigned part URL

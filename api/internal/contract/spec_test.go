@@ -87,6 +87,7 @@ func testConfig(s3Addr string) config.Config {
 		S3BucketRaw: "media-raw", S3BucketHLS: "media-hls", S3BucketPublic: "media-public",
 		UploadMaxBytes: 8 << 30, UploadPartBytes: 64 << 20, UploadURLTTL: 15 * time.Minute, UploadAbandonAfter: 24 * time.Hour,
 		UploadSweepEvery: time.Hour, UploadMaxActive: 3, UploadDailyBytes: 32 << 30,
+		PlaybackSigningKey: "contract-test-signing-key-0123456789ab", PlaybackBaseURL: "http://localhost:8088", PlaybackTokenTTL: 4 * time.Hour,
 		UploadMaxDurationSecs: 4 * 3600, UploadMaxWidth: 3840, UploadMaxHeight: 2160,
 	}
 }

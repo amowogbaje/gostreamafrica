@@ -23,6 +23,7 @@ import (
 	"streamafrica/api/internal/platform/redisx"
 	"streamafrica/api/internal/platform/s3"
 	"streamafrica/api/internal/platform/server"
+	"streamafrica/api/internal/playback"
 )
 
 // Options are the collaborators the app needs. Pool and Redis may be nil only when no request is
@@ -32,12 +33,13 @@ type Options struct {
 	Pool           *pgxpool.Pool
 	Redis          *redis.Client
 	Logger         *slog.Logger
-	Mailer         auth.Mailer          // default: SMTP from Config
-	Now            func() time.Time     // default: time.Now
-	SyncEmail      bool                 // send email inline (tests)
-	CacheNamespace string               // Redis key prefix for the catalog cache (default "catalog")
-	Objects        creators.ObjectStore // default: the S3 client built from Config
-	Scanner        creators.Scanner     // default: no scanning (logged at start-up)
+	Mailer         auth.Mailer           // default: SMTP from Config
+	Now            func() time.Time      // default: time.Now
+	SyncEmail      bool                  // send email inline (tests)
+	CacheNamespace string                // Redis key prefix for the catalog cache (default "catalog")
+	Objects        creators.ObjectStore  // default: the S3 client built from Config
+	Scanner        creators.Scanner      // default: no scanning (logged at start-up)
+	Entitlements   playback.Entitlements // default: published titles only (Phase 4 replaces it)
 	OnRoute        func(path string, methods []string)
 }
 
@@ -130,7 +132,7 @@ func New(o Options) (*App, error) {
 	}
 	creatorStore := creators.NewPGStore(o.Pool)
 	creatorSvc := creators.NewService(creatorStore, objects, scanner, o.Logger, now, creators.Config{
-		RawBucket: cfg.S3BucketRaw, MaxBytes: cfg.UploadMaxBytes, PartBytes: cfg.UploadPartBytes, URLTTL: cfg.UploadURLTTL,
+		RawBucket: cfg.S3BucketRaw, HLSBucket: cfg.S3BucketHLS, PublicBucket: cfg.S3BucketPublic, MaxBytes: cfg.UploadMaxBytes, PartBytes: cfg.UploadPartBytes, URLTTL: cfg.UploadURLTTL,
 		AbandonAfter: cfg.UploadAbandonAfter, MaxActive: cfg.UploadMaxActive, DailyBytes: cfg.UploadDailyBytes,
 		Policy: creators.DefaultPolicy(cfg.UploadMaxDurationSecs, cfg.UploadMaxWidth, cfg.UploadMaxHeight),
 	})
@@ -138,7 +140,15 @@ func New(o Options) (*App, error) {
 	sweeper := creators.NewSweeper(creatorStore, objects, o.Logger, now, creators.SweeperConfig{
 		Bucket: cfg.S3BucketRaw, AbandonAfter: cfg.UploadAbandonAfter, Every: cfg.UploadSweepEvery})
 
-	mounts := []func(httpx.Mux){authHandler.Mount, catalogHandler.Mount, creatorHandler.Mount}
+	ent := o.Entitlements
+	if ent == nil {
+		ent = playback.PublishedOnly{}
+	}
+	playbackSvc := playback.NewService(playback.NewPGStore(o.Pool), ent, playback.NewSigner(cfg.PlaybackBaseURL, cfg.PlaybackSigningKey),
+		cfg.PlaybackTokenTTL, cfg.PlaybackBaseURL+"/public", o.Logger, now)
+	playbackHandler := playback.NewHandler(playbackSvc, authHandler.Authenticate(), limiter, o.Logger)
+
+	mounts := []func(httpx.Mux){authHandler.Mount, catalogHandler.Mount, creatorHandler.Mount, playbackHandler.Mount}
 	if cfg.APIDocsEnabled {
 		docs, err := apidocs.New()
 		if err != nil {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"streamafrica/worker/internal/testdb"
 	"strings"
 	"testing"
 )
@@ -20,7 +21,7 @@ func needFFmpeg(t *testing.T) {
 	t.Helper()
 	for _, b := range []string{"ffmpeg", "ffprobe"} {
 		if _, err := exec.LookPath(b); err != nil {
-			t.Skipf("%s not installed", b)
+			testdb.Skipf(t, "%s not installed", b)
 		}
 	}
 }

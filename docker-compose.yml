@@ -127,6 +127,10 @@ services:
       S3_BUCKET_RAW: ${S3_BUCKET_RAW}
       S3_BUCKET_HLS: ${S3_BUCKET_HLS}
       S3_BUCKET_PUBLIC: ${S3_BUCKET_PUBLIC}
+      # signed media URLs (docs/playback.md): the same key is given to nginx, which checks every request
+      PLAYBACK_SIGNING_KEY: ${PLAYBACK_SIGNING_KEY}
+      PLAYBACK_BASE_URL: ${PLAYBACK_BASE_URL}
+      PLAYBACK_TOKEN_TTL_HOURS: ${PLAYBACK_TOKEN_TTL_HOURS:-4}
       UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-8589934592}
       UPLOAD_PART_BYTES: ${UPLOAD_PART_BYTES:-67108864}
       UPLOAD_MAX_ACTIVE_PER_CREATOR: ${UPLOAD_MAX_ACTIVE_PER_CREATOR:-3}
@@ -156,6 +160,11 @@ services:
       TEST_DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
       TEST_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       OPENAPI_SPEC: /docs/openapi.yaml
+      # the real-storage test of the S3 client (it cleans up after itself); REQUIRE_INTEGRATION makes a missing service fail
+      TEST_S3_ENDPOINT: http://seaweedfs:8333
+      TEST_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      TEST_S3_SECRET_KEY: ${S3_SECRET_KEY}
+      REQUIRE_INTEGRATION: "1"
     volumes:
       - ./api:/app
       - ./docs:/docs:ro
@@ -190,6 +199,12 @@ services:
       WORKER_FFMPEG_THREADS: ${WORKER_FFMPEG_THREADS:-2}
       WORKER_X264_PRESET: ${WORKER_X264_PRESET:-veryfast}
       WORKER_TEMP_DIR: /scratch
+      # tests run inside this container (make test): throwaway database schemas and test objects, never your data
+      TEST_DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      TEST_S3_ENDPOINT: http://seaweedfs:8333
+      TEST_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      TEST_S3_SECRET_KEY: ${S3_SECRET_KEY}
+      REQUIRE_INTEGRATION: "1"
       S3_ENDPOINT: http://seaweedfs:8333
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
@@ -200,6 +215,7 @@ services:
       S3_BUCKET_PUBLIC: ${S3_BUCKET_PUBLIC}
     volumes:
       - ./worker:/app
+      - ./api/migrations:/api/migrations:ro   # the worker's database tests apply the API's migrations
       - gomod_cache:/go/pkg/mod
       - worker_gobuild:/root/.cache/go-build
       - worker_scratch:/scratch
@@ -246,6 +262,7 @@ services:
       CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN}
       S3_BUCKET_HLS: ${S3_BUCKET_HLS}
       S3_BUCKET_PUBLIC: ${S3_BUCKET_PUBLIC}
+      PLAYBACK_SIGNING_KEY: ${PLAYBACK_SIGNING_KEY}
     volumes:
       - ./infra/nginx/templates:/etc/nginx/templates:ro
       - ./infra/nginx/snippets:/etc/nginx/snippets:ro

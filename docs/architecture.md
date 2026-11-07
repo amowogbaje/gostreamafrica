@@ -110,5 +110,5 @@ sequenceDiagram
 ## Open items
 - ADR-0008 (pricing) and ADR-0010 (licensing) are Proposed and need your decision.
 - The home page renders on the server today. A cPanel static demo needs client-side fetching, so decide that when the demo is built.
-- Prompt 2.3 must decide how nginx reads the private HLS bucket (see ADR-0014).
+- nginx reads the private HLS bucket through SeaweedFS's unpublished file API, behind signed URLs (ADR-0017).
 - `docker-compose.prod.yml` and the production safety check are not built yet.

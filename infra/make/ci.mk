@@ -1,5 +1,5 @@
 # Included from the root Makefile with: -include infra/make/ci.mk
-.PHONY: docker-build actionlint env-upgrade test-unit seed seed-bulk seed-bulk-clean explain docs docs-sync s3-check storage-ls dev-creator upload-test
+.PHONY: docker-build actionlint env-upgrade test-unit seed seed-bulk seed-bulk-clean explain docs docs-sync s3-check storage-ls dev-creator upload-test playback-check
 
 docker-build: ## Build the three production images locally (same as CI)
 	docker build -t streamafrica-api:local ./api
@@ -12,8 +12,9 @@ actionlint: ## Lint the GitHub workflow files
 env-upgrade: ## Add variables that are new in .env.example to your .env (never changes existing values)
 	@sh infra/scripts/env-upgrade.sh
 
-test-unit: .env ## Go tests that need no database or Redis (the stack can be down)
-	$(COMPOSE) run --rm --no-deps -e TEST_DATABASE_URL= -e TEST_REDIS_URL= api sh -c "go mod tidy && go test -count=1 ./..."
+test-unit: .env ## Go tests that need no database, Redis or storage (the stack can be down; integration tests skip)
+	$(COMPOSE) run --rm --no-deps -e TEST_DATABASE_URL= -e TEST_REDIS_URL= -e TEST_S3_ENDPOINT= -e REQUIRE_INTEGRATION= api sh -c "go mod tidy && go test -count=1 ./..."
+	$(COMPOSE) run --rm --no-deps -e TEST_DATABASE_URL= -e TEST_S3_ENDPOINT= -e REQUIRE_INTEGRATION= worker go test -count=1 ./...
 
 # Sample data helpers. They run psql inside the postgres container and refuse unless APP_ENV=local.
 PSQL = $(COMPOSE) exec -T postgres sh -c 'psql -q -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -v sample_ok=1'
@@ -56,3 +57,6 @@ dev-creator: .env ## Make an account a creator and print a draft movie id to upl
 
 upload-test: ## Upload a file through the API like a browser would (see docs/upload-flow.md): make upload-test ARGS="--email .. --password .. --title .. --file video.mp4"
 	@python3 infra/scripts/upload_client.py $(ARGS)
+
+playback-check: ## Prove signed playback URLs work and are enforced: make playback-check ARGS="--email .. --password .. --id <title-id>"
+	@python3 infra/scripts/playback_check.py $(ARGS)
